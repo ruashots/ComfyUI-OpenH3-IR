@@ -1,0 +1,11 @@
+# Virtualenvs, any suffix. `.venv/` alone lets a `.venv2/` show up in git status, which is one
+# careless `git add -A` away from a virtualenv in the history.
+.venv*/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Build and install artifacts
+build/
+dist/
+*.egg-info/

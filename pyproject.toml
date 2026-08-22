@@ -1,0 +1,42 @@
+[project]
+# The ComfyUI Registry reads this file. `name` is the registry id and it is permanent: it is what a
+# `comfy node install` names and what the Manager list matches on, so it is chosen once and never
+# changed. The repository folder is `ComfyUI-OpenH3-IR`, which is what a Manager clone lands in
+# `custom_nodes` as and what a user reads on the list.
+name = "openh3-ir"
+version = "0.3.0"
+description = "Write one sentence, get a MiniMax H3 render that is ready to run. Four nodes over the OpenH3-IR compiler."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+# ComfyUI ships on 3.10 through 3.13. The compiler declares the same floor, and
+# tests/test_supported_python_versions.py holds every file in this pack against it.
+requires-python = ">=3.10"
+
+# The compiler, and nothing else. This pack carries no copy of it: a compiler bug is fixed in the
+# compiler's own repository and released, and this repository is not touched for it.
+#
+# The floor is the first release that publishes `GET /v1/contract`, which is what makes a version
+# mismatch between the two halves loud instead of silent. `contract.FIRST_PUBLISHING_RELEASE` is the
+# same number, said to a user in a message, and
+# tests/test_contract_drift.py::test_the_version_the_pack_tells_people_to_install_is_the_one_it_requires
+# fails if the two ever disagree.
+dependencies = [
+  "open-h3-ir>=0.3.0",
+]
+
+[project.optional-dependencies]
+# For this repository's own test run, never for a ComfyUI install. numpy is here because the pack
+# converts IMAGE tensors to files, and that conversion is where a silent resize or a dropped channel
+# would hide; ComfyUI already ships numpy at runtime.
+dev = ["pytest", "numpy"]
+
+[project.urls]
+Repository = "https://github.com/ruashots/ComfyUI-OpenH3-IR"
+
+[tool.comfy]
+# PublisherId is the owner's registry handle and it is deliberately not guessed here. Fill it in
+# before `comfy node publish`; a wrong one publishes under somebody else's name.
+PublisherId = ""
+DisplayName = "OpenH3-IR"
+Icon = ""

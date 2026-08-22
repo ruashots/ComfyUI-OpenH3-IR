@@ -1,0 +1,71 @@
+OpenH3-IR
+Copyright 2026 Ruashots
+
+This product includes software developed by Ruashots.
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+--------------------------------------------------------------------------------
+Vendored third-party files
+--------------------------------------------------------------------------------
+
+h3ir/data/qwen25_tokenizer/vocab.json
+
+    The byte-pair-encoding vocabulary from the Qwen2.5 tokenizer, published by
+    Alibaba Cloud under the Apache License, Version 2.0.
+
+    It is vendored rather than downloaded because token counts here have to be
+    exactly what MiniMax H3's conditioning encoder sees, and H3's own shipped
+    vocab.json is byte-identical to this file (git blob
+    4783fe10ac3adce15ac8f358ef5462739852c569). Vendoring it makes `h3ir budget`
+    exact and offline, with no version of the vocabulary to drift.
+
+--------------------------------------------------------------------------------
+Relationship to MiniMax H3
+--------------------------------------------------------------------------------
+
+This project is an independent, unofficial implementation of the Context-IR
+stage of MiniMax H3. It is not affiliated with, endorsed by, or supported by
+MiniMax.
+
+It contains no MiniMax code, weights, or model files. What it implements is the
+prompt format described in MiniMax's published H3 prompt guides, together with
+behaviour verified against the H3 tokenizer as shipped in ComfyUI. The golden
+fixtures under h3ir/golden/ include MiniMax's own published Ref2VA example,
+quoted so that the validator can be proved against it.
+
+"MiniMax" and "H3" are the marks of their respective owner and are used here
+only to say which format this software targets.
+
+The Apache License above governs this software and nothing else. MiniMax H3
+itself is distributed under the MiniMax H3 Community License Agreement, which
+carries obligations this licence does not, including a territorial restriction
+and a user-interface attribution requirement for commercial use. Anyone running
+a model against briefs produced here is bound by that agreement, not by this
+one. See the README's licence section, and read theirs.
+
+--------------------------------------------------------------------------------
+Adapted third-party work
+--------------------------------------------------------------------------------
+
+comfyui/web/tray.js, comfyui/media.py, comfyui/web_api.py
+
+    The media tray's widget sizing and upload idioms, and the technique for
+    reading media out of ComfyUI's input tree, are adapted from
+    ComfyUI-Fantastic-MiniMaxH3-PromptBuilder by Adudeguyman
+    (https://github.com/Adudeguyman/ComfyUI-Fantastic-MiniMaxH3-PromptBuilder),
+    published under the MIT License.
+
+comfyui/web/prompt.js
+
+    The prompt editor's state idioms are adapted from ComfyUI-MiniMaxH3-Easy
+    by nkxx188 (https://github.com/nkxx188/ComfyUI-MiniMaxH3-Easy), published
+    under the MIT License.
+
+    The technique for drawing the mentions -- a mirror element behind a
+    textarea whose own text is transparent, with the marks on a mention paid
+    for in outer box-shadow so they occupy no room in the line -- is adapted
+    from ComfyUI-Fantastic-MiniMaxH3-PromptBuilder by Adudeguyman
+    (https://github.com/Adudeguyman/ComfyUI-Fantastic-MiniMaxH3-PromptBuilder),
+    published under the MIT License. The same pack's hit-testing of those
+    marks through the textarea above them is what makes hovering one show the
+    file it names.

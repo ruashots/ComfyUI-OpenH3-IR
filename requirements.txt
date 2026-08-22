@@ -1,0 +1,12 @@
+# ComfyUI Manager pip-installs this file on every install of a cloned pack, so it holds exactly what
+# a ComfyUI needs to run these nodes and nothing else. The same list is in pyproject.toml, which is
+# what the ComfyUI Registry reads.
+#
+# The compiler, and no copy of it. `open-h3-ir` brings fastapi, uvicorn, pydantic and tiktoken with
+# it. The nodes still talk to a service over HTTP and need none of that at import time, and the
+# import of the compiler stays lazy for exactly that reason: a missing or half-installed one must
+# never take this pack off ComfyUI's menu.
+#
+# 0.3.0 is the first release that publishes GET /v1/contract, which is what makes a mismatch between
+# the two halves loud. Below it, this pack cannot check anything before it queues.
+open-h3-ir>=0.3.0

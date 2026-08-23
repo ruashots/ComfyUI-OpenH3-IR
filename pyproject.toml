@@ -35,8 +35,8 @@ dev = ["pytest", "numpy"]
 Repository = "https://github.com/ruashots/ComfyUI-OpenH3-IR"
 
 [tool.comfy]
-# PublisherId is the owner's registry handle and it is deliberately not guessed here. Fill it in
-# before `comfy node publish`; a wrong one publishes under somebody else's name.
-PublisherId = ""
+# The registry handle this pack publishes under. A wrong one publishes under somebody else's name,
+# so it is never guessed: it is the handle on registry.comfy.org, given by the person who owns it.
+PublisherId = "ruashots"
 DisplayName = "OpenH3-IR"
 Icon = ""

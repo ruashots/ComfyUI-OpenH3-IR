@@ -4,7 +4,7 @@
 # changed. The repository folder is `ComfyUI-OpenH3-IR`, which is what a Manager clone lands in
 # `custom_nodes` as and what a user reads on the list.
 name = "openh3-ir"
-version = "0.3.0"
+version = "0.3.1"
 description = "Write one sentence, get a MiniMax H3 render that is ready to run. Four nodes over the OpenH3-IR compiler."
 readme = "README.md"
 license = "Apache-2.0"

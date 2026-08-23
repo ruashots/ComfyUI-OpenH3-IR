@@ -22,7 +22,7 @@ requires-python = ">=3.10"
 # tests/test_contract_drift.py::test_the_version_the_pack_tells_people_to_install_is_the_one_it_requires
 # fails if the two ever disagree.
 dependencies = [
-  "open-h3-ir>=0.3.0",
+  "open-h3-ir>=0.4.0",
 ]
 
 [project.optional-dependencies]

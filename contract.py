@@ -46,10 +46,16 @@ SNAPSHOT_PATH = pathlib.Path(__file__).with_name("contract.json")
 SNAPSHOT: dict[str, Any] = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
 BUILT_AGAINST: int = int(SNAPSHOT["contract_version"])
 
-# The oldest release that publishes a contract at all. Named so the "your service is older than this
-# pack" message can say what to install instead of saying that something is wrong. This is a fact
-# about the compiler's release history, not a preference, and it moves only when that history does.
-FIRST_PUBLISHING_RELEASE = "0.3.0"
+# The oldest release this pack can actually work against. Named so the "your service is older than
+# this pack" message can say what to install instead of saying that something is wrong. This is a
+# fact about the compiler's release history, not a preference, and it moves only when that history
+# does.
+#
+# 0.3.0 was the first release to publish a contract at all, and for a while this said 0.3.0 for that
+# reason. It never reached PyPI, and 0.4.0 is the first one that did. 0.4.0 also publishes contract
+# version 2, which is what `contract.json` beside this file was built against, so a pack installing
+# 0.3.0 would have met a mismatch on its first queue. Both facts point at the same number.
+FIRST_PUBLISHING_RELEASE = "0.4.0"
 
 
 class Half:

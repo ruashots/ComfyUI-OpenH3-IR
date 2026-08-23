@@ -7,6 +7,8 @@
 # import of the compiler stays lazy for exactly that reason: a missing or half-installed one must
 # never take this pack off ComfyUI's menu.
 #
-# 0.3.0 is the first release that publishes GET /v1/contract, which is what makes a mismatch between
-# the two halves loud. Below it, this pack cannot check anything before it queues.
-open-h3-ir>=0.3.0
+# 0.4.0 is the oldest release this pack works against, for two reasons that happen to agree. It is
+# the first one on PyPI. And it is the first to publish contract version 2, which is what
+# `contract.json` beside this file was built against, so anything older meets a mismatch on its
+# first queue.
+open-h3-ir>=0.4.0

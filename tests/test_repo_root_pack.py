@@ -178,3 +178,36 @@ def test_no_message_this_pack_shows_a_person_uses_a_dash_as_punctuation():
     assert not offenders, (
         "a dash is standing in for punctuation in text a person reads. Use a colon or a full stop:\n"
         + "\n".join(offenders))
+
+
+# ------------------------------------------------- every board refuses the width the host writes
+
+BOARDS = (
+    ("web/main.js", "Main"),
+    ("web/tray.js", "Media"),
+    ("web/setup.js", "Setup"),
+    ("web/director.js", "Director"),
+)
+
+
+def test_every_board_refuses_the_width_the_host_writes_onto_it():
+    """A board fills the node it is in, so it has no width of its own to be told.
+
+    The frontend writes a `width` onto every widget from a node layout pass, and for a full-bleed
+    board that number is the content width rather than the box. Nothing reads it while the board is
+    a live element, so nothing looks wrong. Zoom out far enough that the element is hidden, and the
+    canvas draws the board from that number instead: painted past the right edge of the node, over
+    empty canvas, taking the mouse where it lands.
+
+    MEASURED from the owner's screenshot: node body 497 pixels wide, board 660. Reproduced by
+    writing 900 onto the widget by hand and photographing the result.
+
+    Three of the four boards already refused the write. The Media board was the one that did not,
+    which is the node the owner reported. The rule is one rule, so it is checked for all four here
+    rather than left to whoever writes the fifth.
+    """
+    for rel, name in BOARDS:
+        js = (REPO / rel).read_text(encoding="utf-8")
+        assert 'Object.defineProperty(' in js and '"width", { get: () => null, set: () => {}' in js, (
+            f"the {name} board takes the width the host writes onto it. Refuse it the way the "
+            f"other boards do, or it is drawn at that width when the canvas draws it.")

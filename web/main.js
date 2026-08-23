@@ -56,6 +56,13 @@ const BOX_MIN = 124;
 const WIDGETS = ["intent", "seconds", "aspect", "creativity", "silent", "shots", "megapixels",
                  "spoken_language", "sizing", "seed", "effort"];
 
+/* The board is itself a widget, and it must never be treated as one of the ones above. MEASURED:
+ * hiding it hid the whole panel and left the node an empty box with its sockets, on every path that
+ * configures a node -- an undo, a workflow opened from disk, a workflow dragged in off a rendered
+ * video. A node added by hand never showed it, because the board is added after the hiding is done
+ * and only a configure runs the hiding a second time. */
+const BOARD = "oh3m_panel";
+
 /* The rows that open a list, and what the list teaches that the row alone cannot say. Values are
  * the schema's own words, verbatim, so a graph and a panel can never disagree about what was
  * picked. */
@@ -634,10 +641,10 @@ app.registerExtension({
                      absent.join(", "), "- drawing the plain node instead");
         return r;
       }
-      for (const w of this.widgets || []) conceal(w);
+      for (const w of this.widgets || []) if (w.name !== BOARD) conceal(w);
       const panel = new Panel(this, by);
       this._oh3Main = panel;
-      const w = this.addDOMWidget("oh3m_panel", "div", panel.root, { serialize: false });
+      const w = this.addDOMWidget(BOARD, "div", panel.root, { serialize: false });
       /* The board has no width of its own: it is the node's, whatever the node has been dragged to.
        * The frontend writes a `width` onto every widget from a layout pass on each value change and
        * for a full-bleed board that number is the content width, not the box. Measured on the
@@ -667,7 +674,7 @@ app.registerExtension({
     const onConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function () {
       const r = onConfigure?.apply(this, arguments);
-      for (const w of this.widgets || []) conceal(w);
+      for (const w of this.widgets || []) if (w.name !== BOARD) conceal(w);
       this._oh3Main?.render();
       return r;
     };

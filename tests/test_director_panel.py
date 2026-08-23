@@ -342,3 +342,26 @@ def test_the_node_field_the_panel_writes_is_the_one_the_node_declares():
     assert director_bundle(profile='{"name":"Mine","notes":"Sodium."}') == {"name": "Mine",
                                                                            "notes": "Sodium."}
     assert director_bundle(profile="{}") is None
+
+
+# --------------------------------------------------- the node can be made smaller again
+
+def test_the_smallest_this_node_may_be_is_a_constant_and_not_its_current_height():
+    """The board asks for the node's height less the sockets above it, and LiteGraph asks every
+    widget how much room it needs before it lets a drag make the node smaller. Left alone, those two
+    questions answer each other: the board asks for whatever the node already is, LiteGraph reads
+    that back as the floor, and the floor rises to meet the node on every pass.
+
+    MEASURED on the live canvas: a node 464 tall, dragged out to 664, then pulled back in by 200,
+    ended up 704. Dragging the corner in made it bigger. Width was always fine, because only the
+    height is worked out this way.
+
+    So the node's own floor must not read `this.size`. The board still may, and does, because that
+    is how it fills whatever room it is given.
+    """
+    start = JS.index("nodeType.prototype.computeSize = function ()")
+    body = JS[start:JS.index("};", start)]
+    assert "this.size" not in body, (
+        "the node's floor is worked out from how big the node is now. That is the loop that made "
+        "dragging the corner inward grow the node.")
+    assert "MIN_H + NODE_H_EXTRA" in body, "the floor should be the stated minimum, not a new number"

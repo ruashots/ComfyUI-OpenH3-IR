@@ -96,6 +96,26 @@ def test_the_panel_hides_the_host_textarea_as_well_as_the_widget_row():
     assert ".remove()" not in body, "the element carries the value, so it is hidden, never removed"
 
 
+def test_the_board_is_never_hidden_along_with_the_widgets_it_replaced():
+    """The board is itself a widget, so a loop that hides every widget on the node hides the board
+    too and leaves an empty box with sockets on it.
+
+    MEASURED on the live canvas: it happened on every path that configures an existing node -- an
+    undo, a workflow opened from disk, a workflow dragged in off a rendered video -- and never on a
+    node added by hand, because the board is added after the first hiding loop has already run and
+    only a configure runs a second one.
+
+    Both loops are asserted, not just the one that broke, because the same line in either place
+    brings the same empty node back.
+    """
+    hides = [line.strip() for line in JS.splitlines() if "conceal(w)" in line and "for (" in line]
+    assert len(hides) == 2, f"expected two hiding loops, found {len(hides)}: {hides}"
+    for line in hides:
+        assert "w.name !== BOARD" in line, f"this loop hides the board itself: {line}"
+    assert 'const BOARD = "oh3m_panel";' in JS
+    assert "this.addDOMWidget(BOARD," in JS, "the board must be added under the name the loops skip"
+
+
 # ------------------------------------------------- every field keeps a label after you type
 
 ROW_LABELS = ["spoken in", "seconds", "frame shape", "resolution", "shots", "invention", "music"]

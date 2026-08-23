@@ -741,7 +741,7 @@ class Tray {
              + "as you type it." });
     label.addEventListener("input", () => this.fixName(label));
     label.addEventListener("change", () => this.rename(slot.label, label));
-    const role = el("select", { class: "oh3-in", title: "what this file is to the piece" });
+    const role = el("select", { class: "oh3-in", title: "what this file is to the video" });
     for (const words of ROLES[slot.kind]) role.append(el("option", {
       value: ROLE_TOKEN[words], textContent: words, selected: ROLE_TOKEN[words] === slot.role }));
     role.addEventListener("change", () => {
@@ -944,6 +944,20 @@ app.registerExtension({
       const tray = new Tray(this, state);
       this._oh3Tray = tray;
       const panel = this.addDOMWidget("oh3_panel", "div", tray.root, { serialize: false });
+      /* The board has no width of its own: it is the node's, whatever the node is.
+       *
+       * The frontend writes a `width` onto every widget from a node layout pass, and for a
+       * full-bleed board that number is the content width rather than the box. While the board is
+       * a live element nothing reads it, so nothing looks wrong. Zoom out far enough and the
+       * element is hidden and the canvas draws the board itself, from that number -- and the board
+       * is painted past the right edge of the node, over empty canvas, where it also takes the
+       * mouse clicks that land on it.
+       *
+       * MEASURED from the owner's own screenshot: the node body was drawn 497 pixels wide and the
+       * board 660, one third wider than the node it belongs to. Reproduced here by writing 900 onto
+       * the widget by hand. The other three panels in this pack already refuse the write; this one
+       * was the only board still taking it. */
+      Object.defineProperty(panel, "width", { get: () => null, set: () => {}, configurable: true });
       // Honoured by the canvas renderer; harmless where Vue owns layout, and the board's own
       // pinned CSS is what actually keeps it intact there.
       panel.computedHeight = PANEL_H;

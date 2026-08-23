@@ -82,7 +82,7 @@ CANNOT_ASK = {2: "pytest was interrupted", 3: "an internal pytest error",
 # compiler that generates them instead.
 TOUCHES = ["tray.py", "h3ir_client.py", "nodes.py", "contract.py", "compiler.py", "web_api.py",
            "web/director.js", "web/contract.data.js", "web/setup.js", "web/main.js",
-           "web/prompt.js", "requirements.txt"]
+           "web/prompt.js", "web/tray.js", "requirements.txt"]
 
 
 def _compiler_dir() -> pathlib.Path:
@@ -483,7 +483,7 @@ CASES = [
      "tests/test_contract_drift.py::test_a_slot_set_to_a_job_the_service_has_no_name_for_stops_the_graph"),
 
     ("the pack tells people to install a version it does not require",
-     patch("contract.py", 'FIRST_PUBLISHING_RELEASE = "0.3.0"',
+     patch("contract.py", 'FIRST_PUBLISHING_RELEASE = "0.4.0"',
            'FIRST_PUBLISHING_RELEASE = "0.2.0"'),
      "tests/test_contract_drift.py::test_the_version_the_pack_tells_people_to_install_is_the_one_it_requires"),
 
@@ -668,7 +668,7 @@ CASES = [
      "tests/test_in_process.py::test_a_language_model_field_a_service_graph_cannot_use_is_reported_and_never_ignored"),
 
     ("the pack stops declaring the compiler it runs in process",
-     patch("requirements.txt", "open-h3-ir>=0.3.0", "# open-h3-ir>=0.3.0"),
+     patch("requirements.txt", "open-h3-ir>=0.4.0", "# open-h3-ir>=0.4.0"),
      "tests/test_in_process.py::test_the_pack_declares_the_compiler_it_now_runs_in_process "
      "tests/test_contract_drift.py::test_the_version_the_pack_tells_people_to_install_is_the_one_it_requires"),
 
@@ -921,6 +921,30 @@ CASES = [
     ("the host's textarea is left floating on top of the panel that replaced it",
      patch("web/main.js", '    e.style.setProperty("display", "none", "important");\n', ""),
      "tests/test_main_panel.py::test_the_panel_hides_the_host_textarea_as_well_as_the_widget_row"),
+
+    ("the Media board takes the width the host writes onto it",
+     patch("web/tray.js",
+           '      Object.defineProperty(panel, "width", { get: () => null, set: () => {}, configurable: true });\n',
+           ""),
+     "tests/test_repo_root_pack.py::test_every_board_refuses_the_width_the_host_writes_onto_it"),
+
+    ("the Director's floor is worked out from how big the Director already is",
+     patch("web/director.js",
+           "    nodeType.prototype.computeSize = function () {\n"
+           "      return [MIN_W, MIN_H + NODE_H_EXTRA];\n"
+           "    };",
+           "    nodeType.prototype.computeSize = function () {\n"
+           "      return [MIN_W, Math.max(MIN_H + NODE_H_EXTRA, this.size?.[1] || 0)];\n"
+           "    };"),
+     "tests/test_director_panel.py::test_the_smallest_this_node_may_be_is_a_constant_and_not_its_current_height"),
+
+    ("the board is hidden along with the widgets it replaced, on every configure",
+     patch("web/main.js",
+           "      const r = onConfigure?.apply(this, arguments);\n"
+           "      for (const w of this.widgets || []) if (w.name !== BOARD) conceal(w);",
+           "      const r = onConfigure?.apply(this, arguments);\n"
+           "      for (const w of this.widgets || []) conceal(w);"),
+     "tests/test_main_panel.py::test_the_board_is_never_hidden_along_with_the_widgets_it_replaced"),
 
     ("a backtick reaches the Main panel's stylesheet and the file stops parsing",
      patch("web/main.js", ".oh3m-msg.oh3m-bad{color:#f07070;}",

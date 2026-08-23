@@ -736,6 +736,21 @@ app.registerExtension({
       requestAnimationFrame(() => panel.render());
       return r;
     };
+    /* The smallest this node may be, and it must not be worked out from how big it is now.
+     *
+     * MEASURED, and the reason this exists: the board asks for the node's height less the sockets
+     * above it, and LiteGraph asks every widget how much room it needs before it lets a drag make
+     * the node smaller. Those two questions answered each other. The board asked for whatever the
+     * node already was, LiteGraph read that back as the floor, and the floor rose to meet the node
+     * on every pass. Dragging the corner in grew the node instead of shrinking it: 464 tall, out to
+     * 664, and pulling back 200 left it at 704.
+     *
+     * A constant breaks the loop. The board still takes the node's height, so it fills whatever it
+     * is given, but the number LiteGraph clamps a drag against no longer depends on it. */
+    nodeType.prototype.computeSize = function () {
+      return [MIN_W, MIN_H + NODE_H_EXTRA];
+    };
+
     const onResize = nodeType.prototype.onResize;
     nodeType.prototype.onResize = function (size) {
       try {

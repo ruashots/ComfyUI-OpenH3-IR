@@ -5,7 +5,7 @@
 # `custom_nodes` as and what a user reads on the list.
 name = "openh3-ir"
 version = "0.3.1"
-description = "Write one sentence, get a MiniMax H3 render that is ready to run. Four nodes over the OpenH3-IR compiler."
+description = "Four nodes for MiniMax H3: write a plain prompt, name your pictures, clips and sounds with @, lock exact dialogue, and get the structured brief H3 wants. Nothing to start beside ComfyUI."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]

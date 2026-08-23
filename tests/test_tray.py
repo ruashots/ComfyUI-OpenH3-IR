@@ -243,18 +243,26 @@ def test_the_readme_lists_exactly_the_roles_the_tray_takes():
     another repository and no check can span the two. The compiler's own front page carries a copy
     of this table with nothing holding it true, which is the drift this test exists to prevent,
     living on in the one place this repository cannot reach.
+
+    The README moved these three lists out of a table and into a bullet list under a heading per
+    kind. The scan moved with it, and the shape it reads is asserted first: a scan that matches
+    nothing would pass every claim below it and prove none of them.
     """
     import pathlib as _p
 
     root = _p.Path(__file__).resolve().parents[1]
     for doc in ("README.md",):
         body = (root / doc).read_text(encoding="utf-8")
-        for kind, word in (("picture", "picture"), ("video", "clip"), ("sound", "sound")):
-            rows = [l for l in body.splitlines() if l.startswith(f"| {word} | ")]
-            assert len(rows) == 1, f"{doc} has {len(rows)} rows for a {word}, so this scan is blind"
-            listed = [w.strip() for w in rows[0].split("|")[2].split("·")]
+        for kind, heading in (("picture", "Pictures"), ("video", "Clips"), ("sound", "Sounds")):
+            mark = f"### {heading}\n"
+            assert body.count(mark) == 1, (
+                f"{doc} has {body.count(mark)} headings reading {mark.strip()!r}, so this scan is "
+                "blind. The list moved; move the scan with it.")
+            block = body.split(mark, 1)[1].split("\n\n", 2)[0]
+            listed = [l[2:].strip() for l in block.splitlines() if l.startswith("* ")]
+            assert listed, f"{doc} lists nothing under {mark.strip()!r}, so this scan is blind"
             assert listed == list(T.ROLES[kind]), (
-                f"{doc} says a {word} can be {listed} and tray.py takes "
+                f"{doc} says a {heading.lower()[:-1]} can be {listed} and tray.py takes "
                 f"{list(T.ROLES[kind])}.")
 
 

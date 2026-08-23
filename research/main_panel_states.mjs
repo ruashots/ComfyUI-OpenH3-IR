@@ -28,7 +28,7 @@ const STATES = [
     says: "nothing written yet" },
   { name: "02-no-tray", tray: null,
     text: "a hot air balloon drifts over misty green hills at sunrise",
-    says: "No tray is connected, so the video is written from your words alone." },
+    says: "No Media node is connected, so the video is written from your words alone." },
   { name: "03-tray-unused", tray: "four",
     text: "a hot air balloon drifts over misty green hills at sunrise",
     says: "The tray holds 4 files. Type @ to name one in the prompt." },
@@ -51,7 +51,7 @@ const STATES = [
           + "change the names here." },
   { name: "07-mention-no-tray", tray: null,
     text: "@carguy walks onto the wet gantry in the rain.",
-    says: "No tray is connected, so @carguy names nothing. Wire an OpenH3-IR Media node into "
+    says: "No Media node is connected, so @carguy names nothing. Wire an OpenH3-IR Media node into "
           + "media." },
   { name: "08-unclosed-line", tray: null,
     text: 'he stops and says @speaks("we are not going back',

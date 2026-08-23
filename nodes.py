@@ -251,7 +251,7 @@ class OpenH3IRCompile(io.ComfyNode):
                             "whoever is directing."),
                 Media.Input(
                     "media", display_name="media", optional=True,
-                    tooltip="Everything the piece looks at or listens to, from an OpenH3-IR Media "
+                    tooltip="Everything the video looks at or listens to, from an OpenH3-IR Media "
                             "node: its pictures, clips and sounds, each one saying what it is. The "
                             "names of its slots are what @ in the sentence above refers to. Leave it "
                             "empty for a piece with no media at all."),
@@ -991,7 +991,7 @@ class OpenH3IRMedia(io.ComfyNode):
                 shown.append(f"soundtrack {slot.soundtrack}")
             print("[OpenH3-IR] tray  " + "  ".join(shown))
         if not loaded:
-            print("[OpenH3-IR] tray  empty, so the piece has no media")
+            print("[OpenH3-IR] tray  empty, so the video has no media")
         return io.NodeOutput({"slots": loaded, "tray": tray})
 
 

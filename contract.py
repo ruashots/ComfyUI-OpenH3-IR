@@ -176,7 +176,7 @@ def _fields_this_graph_needs(live: dict[str, Any], half: Half, asset_fields: tup
     """
     out = []
     for where, sending, key in (("about an attachment", asset_fields, "asset_fields"),
-                                ("about the piece", brief_fields, "brief_fields")):
+                                ("about the video", brief_fields, "brief_fields")):
         known = set(live.get(key) or ())
         if not known:
             continue

@@ -939,27 +939,47 @@ def family_warning(chosen: str, *, frames_job: bool) -> str:
 
 # --------------------------------------------------------------------------- the bundles
 
-def setup_bundle(*, server: str, reference_model: str, frames_model: str, text_encoder: str,
+def setup_bundle(*, server: str = "", llm_url: str = "", llm_model: str = "",
+                 reference_model: str, frames_model: str, text_encoder: str,
                  video_vae: str, audio_vae: str, weight_dtype: str,
                  timeout_s: int) -> dict[str, Any]:
-    """One socket carrying the eight facts that describe a machine rather than a shot.
+    """One socket carrying the ten facts that describe a machine rather than a shot.
 
     Every file in it was picked by a person. Nothing here searches, prefers a build or fills a gap:
     which file was meant is not a question a filename can answer, and a node that answered it anyway
     was choosing for the user without saying so.
+
+    **An empty `server` is the ordinary case and means the compiler runs here**, in the Python
+    ComfyUI is running, out of the installed `open-h3-ir`. An address in it means that compiler
+    instead, which is how somebody puts the compile on another machine. There is no third state and
+    no fallback between the two: a graph that quietly compiled somewhere other than where it says
+    would produce a brief nobody can account for.
+
+    `llm_url` and `llm_model` belong to the in-process case, because that is the case where nothing
+    else can state them. A service has its own environment and sets them there, so a graph driving
+    one leaves these empty -- and if it does not, the report says they were not used rather than this
+    refusing a graph that is otherwise fine.
+
+    Nothing here checks that any of the three addresses answers. That costs a request, it can only
+    be true at the moment it is asked, and both of the calls that follow have their own message for
+    every way an address can be wrong.
     """
-    address = (server or "").strip()
-    if not address:
+    address = (server or "").strip().rstrip("/")
+    if address and not address.startswith(("http://", "https://")):
         raise ServiceError(
-            "the service field is empty. Put the address the OpenH3-IR service listens on, for "
-            f"example {DEFAULT_SERVER}, or delete this node to use that address.")
-    if not address.startswith(("http://", "https://")):
+            f"the OpenH3-IR service address {address!r} has no scheme, so nothing can be requested "
+            f"from it. Write it in full, for example {DEFAULT_SERVER}. Leave it empty to compile in "
+            "ComfyUI itself, which needs no service at all.")
+    endpoint = (llm_url or "").strip().rstrip("/")
+    if endpoint and not endpoint.startswith(("http://", "https://")):
         raise ServiceError(
-            f"the service address {address!r} has no scheme, so nothing can be requested from it. "
-            f"Write it in full, for example {DEFAULT_SERVER}.")
+            f"the language model address {endpoint!r} has no scheme, so nothing can be requested "
+            "from it. Write it in full and end it with /v1, for example "
+            "http://192.168.1.20:8000/v1.")
     if weight_dtype not in WEIGHT_DTYPES:
         raise ServiceError(f"weight_dtype {weight_dtype!r} is not one of {WEIGHT_DTYPES}.")
-    return {"server": address.rstrip("/"), "reference_model": reference_model,
+    return {"server": address, "llm_url": endpoint, "llm_model": (llm_model or "").strip(),
+            "reference_model": reference_model,
             "frames_model": frames_model, "text_encoder": text_encoder, "video_vae": video_vae,
             "audio_vae": audio_vae, "weight_dtype": weight_dtype, "timeout_s": int(timeout_s)}
 
@@ -980,6 +1000,76 @@ def _sentence(text: str) -> str:
     return text if not text or text[-1] in ".!?:" else text + "."
 
 
+# --------------------------------------------------------- the sentences both compile paths use
+#
+# Six refusals mean exactly the same thing whether the compiler ran in this Python or answered over
+# HTTP, so they are written once and both paths call them. Two paths paraphrasing one refusal is two
+# sentences to keep true, and the one that gets read less is the one that goes stale -- which is the
+# whole shape of the bug this pack keeps finding: a second statement of one fact, drifting quietly.
+#
+# What is NOT here is everything whose fix depends on where the compiler is. An unreachable language
+# model is the user's own address on the Setup node in-process and somebody else's machine over
+# HTTP, and a reader told the wrong one goes off to fix a thing that is not broken.
+
+
+def refused_as_asked(message: str) -> str:
+    """The compiler read the request, understood it, and will not write it as stated.
+
+    One sentence for the whole class rather than one per code. Every refusal in it already names the
+    specific contradiction -- which slot says nothing about who it replaces, which shot count does
+    not fit the duration -- so this only says whose decision it was and where the fix is.
+    """
+    return ("the compiler will not write this brief as asked: "
+            f"{_sentence(message)} Nothing is wrong with the compiler or with how this graph "
+            "reached it; this is about what the graph is asking for, and the sentence above says "
+            "which part. Change it and queue again.")
+
+
+def over_capacity(message: str) -> str:
+    """More references than H3 has sockets for. Its own branch because the socket counts are a fact
+    worth stating rather than leaving to the message."""
+    return (f"more references than H3 has sockets for: {_sentence(message)} Nothing was silently "
+            "dropped, because which reference matters is your call. Unplug what you can spare: H3 "
+            "takes nine pictures, three clips and three standalone sounds.")
+
+
+def asset_unreadable(message: str) -> str:
+    """The file was found and opened and could not be used. Never a path problem, so a message that
+    sent somebody to check a path would send them to fix the one thing that is not wrong."""
+    return ("the compiler opened your attachment and could not use it: "
+            f"{_sentence(message)} That is about the file rather than about the wiring: a different "
+            "path would fail the same way. Check the file in the tray slot the message names on the "
+            "OpenH3-IR Media node.")
+
+
+def analysis_tool_missing(message: str, *, where: str) -> str:
+    """ffmpeg is not installed on the machine that has to read the clip. `where` is which machine,
+    because that is the only part of this a reader has to act on."""
+    return (f"your attachment cannot be read because a tool the compiler needs is not installed "
+            f"{where}: {_sentence(message)} This is about that machine, not about your graph. A "
+            "text-only prompt still works.")
+
+
+def contradictions(problems: list[dict[str, Any]]) -> str:
+    """The request compiled and then failed the compiler's own checks in ways the caller can act on."""
+    lines = "\n  ".join(f"{p.get('rule')}: {p.get('message')}" for p in problems)
+    return "the request contradicts itself, so no brief was written:\n  " + lines
+
+
+def needs_input_first(question: str, default: str = "") -> str:
+    """One decision the compiler will not take on somebody's behalf.
+
+    Refused rather than assumed, on both paths. A queue has no second turn: there is nowhere to ask,
+    and answering it here would decide on the canvas's behalf whether a picture is the opening frame
+    or a reference for how something looks, which are two different renders.
+    """
+    return (f"the compiler needs one thing settled before it can write this brief: "
+            f"{question or 'it needs one decision from you'} "
+            + (f"It would otherwise assume: {default}. " if default else "")
+            + "State it in the intent text, for example by saying whether an attached image is the "
+              "opening frame or a reference for how something looks.")
+
+
 def compile_brief(server: str, payload: dict[str, Any], *, timeout: float = 600.0) -> dict[str, Any]:
     """POST the brief, then fetch the render fields. Returns the /prompt body plus the brief id.
 
@@ -995,11 +1085,11 @@ def compile_brief(server: str, payload: dict[str, Any], *, timeout: float = 600.
             raise ServiceError(
                 f"the service could not read an attachment: {det.get('message', code)}. "
                 "ComfyUI and the service are looking at the same file through different paths, for "
-                "example /mnt/c/ComfyUI-Production where ComfyUI itself says C:\\ComfyUI-Production. "
+                "example /mnt/c/ComfyUI where ComfyUI itself says C:\\ComfyUI. "
                 "The node tries the plausible spellings itself and this is what is left when none of "
                 "them opened. If the service runs on another machine entirely it cannot open "
-                "ComfyUI's files at all, and only text-only prompts will work; if it runs beside "
-                "ComfyUI, give it read access to ComfyUI's folder.", PATH_MAY_BE_WRONG)
+                "ComfyUI's files at all. If it runs beside ComfyUI, give it read access to "
+                "ComfyUI's folder.", PATH_MAY_BE_WRONG)
         if code == "asset-not-uploaded":
             # Usually not read by anyone: `missing` names the files to send, the caller sends them
             # and asks again, and that is how a service on another machine works at all. So this
@@ -1030,11 +1120,7 @@ def compile_brief(server: str, payload: dict[str, Any], *, timeout: float = 600.
             # cannot help, so this must NOT carry the retry marker. The analyser writes these for a
             # person to read and already names the file and what is wrong with it, so it is passed
             # through whole and only the socket-side action is added.
-            raise ServiceError(
-                f"the service opened your attachment and could not use it: "
-                f"{_sentence(det.get('message', code))} That is about the file rather than about the wiring: a "
-                "different path would fail the same way. Check the file in the tray slot the message "
-                "names on the OpenH3-IR Media node.")
+            raise ServiceError(asset_unreadable(det.get("message", code)))
         if code == "unknown-field":
             # The two halves at different versions, caught at the wire instead of before it. The
             # node asks `GET /v1/contract` first and refuses there with the tray slot named, so
@@ -1068,21 +1154,12 @@ def compile_brief(server: str, payload: dict[str, Any], *, timeout: float = 600.
             # true. The list is what makes the branch reachable, and `contract.json`
             # publishes the codes so a new one added over there fails a test over here instead of
             # falling through to a sentence that says nothing.
-            raise ServiceError(
-                "the compiler will not write this brief as asked: "
-                f"{_sentence(det.get('message', code))} Nothing is wrong with the service or the "
-                "connection; this is about what the graph is asking for, and the sentence above "
-                "says which part. Change it and queue again.")
+            raise ServiceError(refused_as_asked(det.get("message", code)))
         if code == "over-capacity":
-            raise ServiceError(
-                f"more references than H3 has sockets for: {_sentence(det.get('message', code))} Nothing "
-                "was silently dropped, because which reference matters is your call. Unplug what you can "
-                "spare: H3 takes nine pictures, three clips and three standalone sounds.")
+            raise ServiceError(over_capacity(det.get("message", code)))
         problems = body.get("errors") if isinstance(body, dict) else None
         if problems:
-            lines = "\n  ".join(f"{p.get('rule')}: {p.get('message')}" for p in problems)
-            raise ServiceError(
-                "the request contradicts itself, so no brief was written:\n  " + lines)
+            raise ServiceError(contradictions(problems))
         raise ServiceError(f"the service rejected the request: {det.get('message') or body}")
 
     if status == 503:
@@ -1093,10 +1170,9 @@ def compile_brief(server: str, payload: dict[str, Any], *, timeout: float = 600.
             # an endpoint that is working, which is the wrong-message failure this pack exists to
             # avoid. The analyser already names the tool and how to install it, so it is passed
             # through and only the location is added.
-            raise ServiceError(
-                f"the OpenH3-IR service at {server} cannot read your attachment because a tool it "
-                f"needs is not installed where it runs: {_sentence(det.get('message', ''))} This is about the "
-                "machine running the service, not about your graph. A text-only prompt still works.")
+            raise ServiceError(analysis_tool_missing(
+                det.get("message", ""),
+                where=f"where the OpenH3-IR service at {server} runs"))
         raise ServiceError(
             f"the OpenH3-IR service at {server} is running, but the language model endpoint it "
             f"writes with is not answering: {det.get('message', '')}. That endpoint is "
@@ -1123,13 +1199,8 @@ def compile_brief(server: str, payload: dict[str, Any], *, timeout: float = 600.
 
     if body.get("status") == "needs_input":
         q = body.get("question") or {}
-        asked = q.get("question") or "it needs one decision from you"
-        default = body.get("default_if_unanswered")
-        raise ServiceError(
-            f"the compiler needs one thing settled before it can write this brief: {asked} "
-            + (f"It would otherwise assume: {default}. " if default else "")
-            + "State it in the intent text, for example by saying whether an attached image is the "
-              "opening frame or a reference for how something looks.")
+        raise ServiceError(needs_input_first(str(q.get("question") or ""),
+                                             str(body.get("default_if_unanswered") or "")))
 
     status2, prompt_body = _request(server, f"/v1/briefs/{brief_id}/prompt", timeout=timeout)
     if status2 != 200 or not isinstance(prompt_body, dict):
@@ -1270,7 +1341,7 @@ def bindings_by_content(written: list[tuple[str, str, str, dict[str, Any]]],
     return out
 
 
-def report(prompt_body: dict[str, Any], *, server: str, sizing_conflict: bool,
+def report(prompt_body: dict[str, Any], *, compiler: str, sizing_conflict: bool,
            asked_seconds: float | None = None,
            bindings: dict[str, list[str]] | None = None) -> str:
     """A short human-readable account of what came back, for a preview node or the console.
@@ -1278,6 +1349,11 @@ def report(prompt_body: dict[str, Any], *, server: str, sizing_conflict: bool,
     It exists because the interesting facts are the ones a user cannot see in a STRING socket: which
     mode was inferred, whether the length they asked for was moved, and which socket became which
     picture label.
+
+    `compiler` is which compiler wrote it, in the words `contract.Half` uses -- a service and its
+    address, or the package in ComfyUI's own Python. It is on the brief id line because those two
+    facts belong together: a brief id names one request to one compiler, and the pair is what
+    somebody quotes when they ask why a render came out the way it did.
 
     `bindings` maps a file's sha256 to the tray slots holding it. The service hashes the same bytes,
     so the attachment block below is the service's own manifest with the user's own slot labels put
@@ -1296,7 +1372,7 @@ def report(prompt_body: dict[str, Any], *, server: str, sizing_conflict: bool,
     lines.extend([
         line("canvas", f"{canvas[0]}x{canvas[1]}"),
         line("render hash", str(prompt_body.get("render_hash", ""))[:16]),
-        line("brief id", f"{prompt_body.get('brief_id', '')}   on {server}"),
+        line("brief id", f"{prompt_body.get('brief_id', '')}   from {compiler}"),
     ])
 
     wiring = prompt_body.get("wiring") or []

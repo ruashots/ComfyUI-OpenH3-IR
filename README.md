@@ -8,24 +8,30 @@ Type one sentence. Get a MiniMax H3 render that is ready to run.
 just made playing in the save.*
 
 This repository is the ComfyUI half of [OpenH3-IR](https://github.com/ruashots/open-h3-ir), which is one compiler with two
-front doors onto it: these four nodes, and an HTTP service anything else can call. Both doors run the same
-service. What the compiler does to a render, shown side by side, is on that page.
+front doors onto it: these four nodes, and an HTTP service anything else can call. The compiler runs
+inside ComfyUI here, so there is nothing to start. What the compiler does to a render, shown side by
+side, is on that page.
 
 One node writes the brief H3 actually wants, opens the H3 files this particular job needs, and hands
 the render everything it takes to run. There is no text box to paste a document into, no resolution
 picker, no frame-count arithmetic and no row of file loaders.
 
 Four nodes in all, and most pieces use two of them. The first holds the prompt and its knobs. The
-second holds everything the piece looks at or listens to. The third holds the five H3 files. The
-fourth gives the video a director. A piece with no media needs only the first and the third.
+second holds everything the piece looks at or listens to. The third holds your language model and the
+five H3 files. The fourth gives the video a director. A piece with no media needs only the first and
+the third.
 
 ## What you need
 
-An OpenH3-IR service. Start it with `h3ir serve`, which listens on port 8420. It needs
-`H3IR_LLM_URL` pointing at your own OpenAI-compatible endpoint, and no GPU of its own. The
-[compiler's README](https://github.com/ruashots/open-h3-ir#readme) covers it.
+**A language model of your own**, at an address ComfyUI can reach: anything that speaks the OpenAI
+API, so vLLM, llama.cpp's server, LM Studio, Ollama or a hosted one. It writes the brief, and every
+picture in the tray is read through it, so **it has to be able to see**. A text-only model answers
+every other check perfectly and then produces a brief describing pictures nobody looked at. The
+Setup node has a test button that sends one a picture and tells you which yours is.
 
 A ComfyUI with the MiniMax H3 nodes, which ship with ComfyUI itself, and H3's model files.
+
+That is all. There is no service to start and no port to pick.
 
 ## Install
 
@@ -39,31 +45,45 @@ git clone https://github.com/ruashots/ComfyUI-OpenH3-IR.git /path/to/ComfyUI/cus
 /path/to/ComfyUI/python -m pip install -r /path/to/ComfyUI/custom_nodes/ComfyUI-OpenH3-IR/requirements.txt
 ```
 
-That second line installs `open-h3-ir`, the compiler, into the same Python ComfyUI runs. It is the
-one thing this pack asks for, and this repository carries no copy of it: a fix to the compiler is a
-release of the compiler, and nothing here has to change for it.
+That second line installs `open-h3-ir`, the compiler, into the same Python ComfyUI runs. **That is
+what makes this an all-in-one: the compiler runs there, in ComfyUI's own process.** This repository
+carries no copy of it, so a fix to the compiler is a release of the compiler and nothing here has to
+change for it.
 
-The nodes themselves speak HTTP to the service with the standard library only, and they never import
-the compiler while ComfyUI is loading them. A compiler that is missing, half-installed or broken
-costs you the compile, never the nodes.
+Then put your language model's address on the **OpenH3-IR Setup** node, pick your five H3 files, and
+render.
 
-The service can also live on another machine. Where it can open your media off disk it does, because
-nothing is copied and a long clip costs nothing to hand over. Where it cannot, the nodes send the
-bytes to it and name each file by the sha256 of its own contents, so the same file is never sent
-twice. There is nothing to configure and no mechanism to choose: the nodes try the paths first, and
-send the bytes when no spelling of ComfyUI's folder works. A service on another machine keeps the
-uploads for two days, 512 MiB per file at most, and the exact figures come from its own
-`/v1/capabilities`.
+The nodes never import the compiler while ComfyUI is loading them, and they load none of what it
+brings with it unless a graph actually compiles. A compiler that is missing, half-installed or broken
+costs you the compile, never the nodes: every node stays on the menu and the message says which of
+those three it is and what to do about it.
+
+### Or run the compiler somewhere else
+
+Put an address in the same **compile on** field and the compile happens on an OpenH3-IR service there
+instead, started with `h3ir serve`. Same graph, same brief. Use it when the machine ComfyUI is on
+should not be the one talking to a language model, or when several people share one compiler.
+
+That service has its own `H3IR_LLM_URL` where it runs, so the language model fields on the node are
+not used and the report says so rather than leaving you to wonder.
+
+Where a service can open your media off disk it does, because nothing is copied and a long clip costs
+nothing to hand over. Where it cannot, the nodes send the bytes and name each file by the sha256 of
+its own contents, so the same file is never sent twice. There is nothing to configure and no
+mechanism to choose: the nodes try the paths first, and send the bytes when no spelling of ComfyUI's
+folder works. A service on another machine keeps the uploads for two days, 512 MiB per file at most,
+and the exact figures come from its own `/v1/capabilities`.
 
 **The pack and the compiler are updated separately, so the nodes check before they queue.** Before
 any media travels, the Main node asks the compiler that is going to write the brief what it
-takes. It holds that against what this graph is about to send. Something the service has no name for
-stops the queue there. The message names the field or the slot, and which half to update.
+takes -- the one in ComfyUI's Python, or the one at the address you typed, whichever is doing the
+work. It holds that against what this graph is about to send. Something that compiler has no name for
+stops the queue there. The message names the field or the slot, which half to update, and how.
 
-Anything else that differs is a line in the report and never stops a render: a job the service takes
-that this pack cannot offer yet, a ceiling that moved, directions that are not the ones the service
-publishes. A service too old to answer the question at all is one note saying so, and everything it
-does understand still works.
+Anything else that differs is a line in the report and never stops a render: a job the compiler takes
+that this pack cannot offer yet, a ceiling that moved, directions that are not the ones it publishes.
+A compiler too old to answer the question at all is one note saying so, and everything it does
+understand still works.
 
 Then open the workflow that ships with it, which is already wired and runs on a prompt alone:
 [the workflow that ships with this](#the-workflow-that-ships-with-this). That is the fastest way to
@@ -98,9 +118,9 @@ from. Beta costs no extra time.
 ## The four nodes
 
 **OpenH3-IR Main** is the prompt and the knobs. **OpenH3-IR Media** is the tray: everything the
-piece looks at or listens to, dropped on one panel. **OpenH3-IR Setup** carries the service address
-and the five H3 files. **OpenH3-IR Director** is optional. A director decides whatever your own
-prompt leaves open: how it is shot, how it is lit, how it is scored.
+piece looks at or listens to, dropped on one panel. **OpenH3-IR Setup** carries your language model,
+the five H3 files, and where the compile happens. **OpenH3-IR Director** is optional. A director
+decides whatever your own prompt leaves open: how it is shot, how it is lit, what music it has.
 
 Search `h3` and all four come up. `tray` finds the Media node, `director` finds the Director, and
 `minimax` finds the Main one.
@@ -122,7 +142,7 @@ Eight fields, and the first one is the work:
 | `seconds` | the only place length is set, snapped onto H3's frame grid once and then used for the brief and the render together |
 | `frame shape` | 16:9, 21:9, 4:3, 1:1, 3:4 or 9:16. The canvas is sized from it, so there is no resolution box to keep in step with anything |
 | `invention` | how much the writer may add where your prompt is silent: `restrained`, `balanced`, `bold`, `extreme` |
-| `no music` | turns off the score only. Ambient and physical sound are still written, because H3 writes sound in the same pass as the picture |
+| `no music` | turns off the music only. Ambient and physical sound are still written, because H3 writes sound in the same pass as the picture |
 | `shots` | `auto` leaves the edit to the writer. A number from 1 to 10 is kept exactly, and a count that cannot fit the length is refused with the arithmetic, since every shot needs 1.2 seconds |
 | `size, in megapixels` | 0 is H3's native size, 768 on the short edge, which is what it was trained at. A stated size runs from 0.25 to 2.5, and is sharper, slower and hungrier for VRAM in proportion |
 | `spoken in` | the language every `@speaks` line is spoken in, which becomes the tag H3 reads. It decides nothing while no line is locked |
@@ -171,7 +191,7 @@ when the tray shows `showroom`.
 
 | Kind | The choices |
 | --- | --- |
-| picture | something in the shot · the setting · a style to copy · add it to the clip · replace the one in the clip · first frame · last frame · storyboard |
+| picture | something in the shot · the setting · a style to copy · add it to an existing clip · replace the one in an existing clip · first frame · last frame · storyboard |
 | clip | copy what is in it · copy how it is shot · edit it · carry on from it |
 | sound | play it · match its style · cut to its beat · sound effect · voice to match |
 
@@ -188,10 +208,10 @@ it". "Add it to the clip" puts what the picture shows into that footage. It take
 there now: the same place in the frame, the same movement, the same timing. The brief also records
 that the old one is gone. A person, a car, a dog or a coffee cup all work the same way.
 
-Use either choice without a clip to edit and the service refuses the job in a sentence. A picture
+Use either choice without a clip to edit and the compiler refuses the job in a sentence. A picture
 meant to swap something out never becomes one more reference instead.
 
-**What it takes over from.** A picture set to "replace the one in the clip" gets one more field, and
+**What it takes over from.** A picture set to "replace the one in an existing clip" gets one more field, and
 nothing else does. In it you name what in that clip this picture stands in for, in your own words:
 "the man in the plaid shirt", or "the red car on the left".
 
@@ -262,13 +282,42 @@ line they hold. Green rather than something quieter for a reason worth knowing: 
 in the prompt that reaches the model letter for letter, so it is marked as live, not as inert. Open
 one and never close it and the same box turns red, because an unclosed line is refused.
 
-## The five files are yours to pick
+## The machine: your language model, and the five files
 
 ![The OpenH3-IR Setup node: the service address and five file pickers](docs/media/comfyui-setup-node.png)
 
-The Setup node is a picker and nothing else. Each combo lists what your install actually has, in both
-formats, and the file you choose is the file that loads. Nothing here searches by name, prefers a
-build, or offers an option meaning "work it out".
+The Setup node holds everything that is about your machine rather than about the shot.
+
+**The language model** is the one thing you have to fill in. The field is labelled `endpoint`. Write
+the address in full, ending in `/v1`, for example `http://192.168.1.20:8000/v1`. Whatever server you
+run prints its own address when it starts.
+
+Then press **test**. It reaches the address, lists what that server serves, and puts one model in the
+field if there is only one. It then sends that model a picture, because no model list on any of these
+servers says which of its models can see, and every picture in the tray is read through this one. The
+chip beside the model says `vision on`, `vision off`, or `no answer` when the model was never asked.
+
+On an endpoint that serves several models the node will not guess. Pick one from the list.
+
+**Where OpenH3-IR runs** is on the bottom row, and almost nobody touches it. Leave it empty and the
+compiler runs in this ComfyUI. Put an address in it and the writing moves to a service there; this
+ComfyUI still renders either way.
+
+**The api key** is only for an endpoint that asks for one, and it is the one thing on this node that
+is not saved into your workflow. It goes in ComfyUI's own user folder instead, because a workflow
+travels: people share them by dropping a rendered picture into a chat, and the graph inside it
+carries every widget value with it.
+
+The endpoint has to be reachable from the machine ComfyUI is on, not from your browser. The test runs
+where the compiler runs, not in the browser, so a green light means the thing that will do the work
+can reach it.
+
+If you already export `H3IR_LLM_URL` and `H3IR_LLM_MODEL` before starting ComfyUI, those are used
+when the fields are empty, and the report says a value came from there rather than from the node.
+
+**The five files** are a picker and nothing else. Each combo lists what your install actually has, in
+both formats, and the file you choose is the file that loads. Nothing here searches by name, prefers
+a build, or offers an option meaning "work it out".
 
 That is deliberate, and it is worth saying why, because the node used to do the opposite. A filename
 tells you what a file is called. It does not tell you which of two H3 checkpoints you meant, or which
@@ -312,7 +361,7 @@ socket. Then write in it. Leave it out and the writing behaves exactly as before
 The node holds two things: a name, and the direction itself. The direction is ordinary prose. Write
 what the camera does, how tight the framing is, and from what height. Write what the light and the
 colour are like, and what the frame pays attention to. Write how bodies move, how lines are
-delivered, what the room sounds like, and what a score is made of. Describe habits, not particular
+delivered, what the room sounds like, and what the music is made of. Describe habits, not particular
 shots.
 
 The name is also how you pick a different direction. Open the list beside it and you see every
@@ -441,7 +490,11 @@ is the one that loads.
 
 ## Attachments, and two views of one disk
 
-There is nothing to configure here. It is worth knowing what the node does.
+**None of this applies while the compiler runs inside ComfyUI**, which is the ordinary case: it reads
+the very files the tray points at, off the disk they are already on. This section is about a compiler
+on another machine.
+
+There is nothing to configure here either. It is worth knowing what the node does.
 
 The node hands the service a path first, because a path costs nothing. Nothing is copied, and a long
 clip is handed over for free. ComfyUI's own folder is asked of ComfyUI, so nobody types it.
@@ -490,7 +543,7 @@ It takes nine pictures, three clips and three standalone sounds, which are H3's 
 files in total, which is the tray's.
 
 A picture made elsewhere in the same graph cannot be fed in. The tray holds files on disk rather than
-pictures arriving down a wire, and that is deliberate: the service opens the file and H3 renders the
+pictures arriving down a wire, and that is deliberate: the compiler opens the file and H3 renders the
 same file, so the thing described and the thing rendered cannot come apart. The cost is real enough to
 name, though. An `IMAGE` coming out of another node has to be saved first and then dropped on the tray.
 
@@ -506,12 +559,16 @@ look alike are told apart rather than lumped together:
 
 | what happened | what you get |
 | --- | --- |
-| no service running | the command that starts one, and the node to put another address on |
-| service up, your language model down | said as such, so you do not go looking at the graph |
+| no language model address on the node | which field to fill in, in full, with an example |
+| the compiler is not installed in ComfyUI's Python | the pip line, and the other way out, which is a service |
+| it is installed and will not import | named as a half-finished install, with what is missing and how to repair it |
+| the endpoint serves several models | every id it serves, and which field to put one in |
+| your language model is down | said as such, so you do not go looking at the graph |
+| no service running, when you asked for one | the command that starts one, and the node to put another address on |
 | the attachment could not be found | every path it tried, and what to change where the service runs |
 | no Setup node, or one wired to nothing | which files to pick and which socket to wire them into |
 | the attachment opened and could not be used | the analyser's own words about the file, and no retry, because a different path would fail the same way |
-| the service host has no ffmpeg | named as the service machine's problem, not your graph's, and it does not blame your language model even though both are a 503 |
+| no ffmpeg where the compile happens | named as that machine's problem, not your graph's, and it does not blame your language model even though both are a 503 |
 | more references than H3 has sockets | which ceilings, and nothing dropped for you |
 
 Re-queueing an unchanged graph costs nothing. The compiler is seeded, so the same inputs give the same

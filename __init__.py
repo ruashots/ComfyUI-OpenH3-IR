@@ -4,15 +4,23 @@ This repository is the whole node pack, and its root is the pack's root. ComfyUI
 repository straight into `custom_nodes`, so what lands there is this directory, and this file is what
 ComfyUI imports. Installation and wiring are in README.md beside it.
 
-Nothing here imports the `h3ir` package while ComfyUI is loading the pack. The nodes speak to a
-running OpenH3-IR service over HTTP, and the service is free to live on another machine: the media
-goes to it as a filesystem path when the two share a disk, and as uploaded bytes named by their own
-sha256 when they do not. `h3ir_client` owns that choice and makes it by trying, never by asking
-anyone to declare which case they are in.
+**The compiler runs here.** Install the pack, put the address of your own language model on the
+Setup node, and render: there is no service to start, no port to pick and no second process. The
+compiler is the `open-h3-ir` package that `requirements.txt` names, ComfyUI Manager pip-installs it
+with the pack, and it runs in the same Python. This pack still carries no copy of it: a compiler bug
+is fixed and released over there, and nothing here changes for it.
 
-The compiler is a declared dependency, in `pyproject.toml` and in the `requirements.txt` Manager
-pip-installs. That is what makes an in-process compile possible without this pack ever carrying a
-copy of the compiler. The import stays lazy, and `contract.py` holds the one function that does it.
+Putting an address in that same field on the Setup node moves the compile to a service there, for
+somebody running it on another machine, and that path is not the poor relation -- the same graph
+produces the same brief either way. The media then goes to the service as a filesystem path when the
+two share a disk, and as uploaded bytes named by their own sha256 when they do not. `h3ir_client`
+owns that choice and makes it by trying, never by asking anyone to declare which case they are in.
+
+Nothing here imports the `h3ir` package while ComfyUI is loading the pack. `compiler.py` is the one
+module that names it at all and every one of those imports is inside a function, because a pack
+whose import raises is a pack ComfyUI drops off the menu with a traceback nobody can act on, a pack
+driving a remote compiler needs no local package, and the compiler declares fastapi, uvicorn,
+pydantic and tiktoken. Measured: an in-process compile loads none of those four.
 
 The node registration lives in `nodes.py` as a `comfy_entrypoint`, which is ComfyUI's current way of
 declaring nodes and the same one the built-in MiniMax H3 nodes use. It is imported lazily below so
@@ -31,9 +39,11 @@ the strings visible as themselves.
 difference between the two costs. It reads a generated JSON file beside it with the standard library
 and imports nothing from `h3ir`, so the rule above still holds.
 
-`web_api` is imported at module scope because its two HTTP routes have to be registered while ComfyUI
-is starting, and it is written to import cleanly with no ComfyUI present: an exception here would take
-the whole pack off the menu with a traceback nobody can act on.
+`web_api` is imported at module scope because its HTTP routes have to be registered while ComfyUI is
+starting, and it is written to import cleanly with no ComfyUI present: an exception here would take
+the whole pack off the menu with a traceback nobody can act on. Those routes are what the panels ask
+-- where a dropped file went, whether the compiler is installed here, what a language model endpoint
+serves, and whether one of its models can read a picture.
 """
 from __future__ import annotations
 

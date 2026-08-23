@@ -49,19 +49,21 @@ from typing import Any
 from comfy_api.latest import ComfyExtension, io
 
 from . import tray as T
+from .compiler import compile_here, require_installed, resolve_llm_model, resolve_llm_url
 from .contract import differences as contract_differences
+from .contract import the_compiler
 from .media import (digest, load_image, load_sound, load_video, resolve, sha256_file, stamp,
                     write_sound)
 from .h3ir_client import (ASPECTS, CREATIVITY, DEFAULT_SERVER,
                           DIALOGUE_LANGUAGES,
                           EFFORT, FPS, SHOTS, SIZING, WEIGHT_DTYPES,
-                          director_bundle, director_note,
+                          build_payload, director_bundle, director_note,
                           ServiceError, bindings_by_content, check_mode,
                           clip_loader_for, compile_with_media, family_warning,
-                          fetch_contract, inputs_fingerprint, is_gguf, payload_shape,
+                          inputs_fingerprint, is_gguf, payload_shape,
                           length_notes, line,
-                          merge_model_options, precision_ignored_note, render_fields, report,
-                          setup_bundle, unet_loader_for)
+                          merge_model_options, plan_assets, precision_ignored_note, render_fields,
+                          report, setup_bundle, unet_loader_for)
 
 # One socket carrying eight facts about a machine, one carrying everything the piece looks at or
 # listens to. Custom io types, so a plain IMAGE cannot be dropped into a socket that needs a bundle
@@ -185,8 +187,8 @@ class OpenH3IRCompile(io.ComfyNode):
                     "creativity", display_name="invention", options=list(CREATIVITY),
                     default="balanced",
                     tooltip="How much the writer may add where your sentence is silent, which is "
-                            "three things: a score, a spoken line, text in the frame. restrained "
-                            "adds none of them. balanced may add a score. bold may also put words "
+                            "three things: music, a spoken line, text in the frame. restrained "
+                            "adds none of them. balanced may add music. bold may also put words "
                             "in a mouth and text on screen. extreme adds nothing beyond bold, it "
                             "pushes every choice harder. Shot count is never on this dial, and "
                             "saying no dialogue in your sentence still means no dialogue at every "
@@ -194,7 +196,7 @@ class OpenH3IRCompile(io.ComfyNode):
                 io.Boolean.Input(
                     "silent", display_name="no music", default=False,
                     tooltip="H3 writes sound in the same pass as the picture, so silence is a "
-                            "decision rather than an absence. This turns off the score only. "
+                            "decision rather than an absence. This turns off the music only. "
                             "Ambient and physical sound still get written, and speech is governed "
                             "by your sentence and by invention."),
                 io.Combo.Input(
@@ -241,7 +243,7 @@ class OpenH3IRCompile(io.ComfyNode):
                     tooltip="Optional. Whose taste fills what your sentence and your references do "
                             "not say: the camera, the framing, the light and colour, what the frame "
                             "looks at, how bodies and delivery are written, and what the room and "
-                            "any score are made of. From an OpenH3-IR Director node, where it is "
+                            "any music is made of. From an OpenH3-IR Director node, where it is "
                             "written as plain prose. Leave it unconnected and nothing steers the "
                             "writing, which is how every graph without one behaves.\n\nIt never "
                             "decides how many shots there are or where they cut, and anything you "
@@ -256,7 +258,9 @@ class OpenH3IRCompile(io.ComfyNode):
 
                 # --------------------------------------------------------- rarely touched
                 io.Combo.Input(
-                    "sizing", display_name="reference size", options=list(SIZING), default="match",
+                    # `max` rather than `match`, decided in the Main panel design. A saved workflow
+                    # keeps whatever it stored, so two people see two values and both are right.
+                    "sizing", display_name="reference size", options=list(SIZING), default="max",
                     optional=True, advanced=True,
                     tooltip="match fits each picture to the render's pixel area. max keeps the "
                             "picture's own size for stronger identity and is slower, because "
@@ -268,8 +272,9 @@ class OpenH3IRCompile(io.ComfyNode):
                             "this for a different take on the same sentence. This is not the "
                             "sampler's seed."),
                 io.Combo.Input(
+                    # `max` rather than `standard`, for the same reason and with the same caveat.
                     "effort", display_name="writing effort", options=list(EFFORT),
-                    default="standard", optional=True, advanced=True,
+                    default="max", optional=True, advanced=True,
                     tooltip="max asks the writer for reasoning prose and is slower."),
             ],
             outputs=[
@@ -366,29 +371,62 @@ class OpenH3IRCompile(io.ComfyNode):
                      megapixels=megapixels, spoken=list(resolved.spoken),
                      spoken_language=spoken_language, director_profile=director)
 
+        # WHICH compiler is going to do this, decided by the one field on the Setup node that
+        # decides it, and asked about itself rather than about the other one. Empty means the
+        # `open-h3-ir` in this Python, which is the ordinary case and needs nothing started; an
+        # address means a service there. There is no fallback between them: a graph whose compile
+        # quietly moved somewhere else would produce a brief nobody can account for.
+        #
+        # The timeout is capped rather than given the compile timeout. The contract is a static dict
+        # with no computation behind it, so a service that has not answered in half a minute is not
+        # working on it, and waiting out a ten-minute compile timeout here would push the failure the
+        # NEXT request explains well past the point anybody is still watching.
+        half = the_compiler(machine["server"], timeout=min(30.0, float(machine["timeout_s"])))
+        here = not machine["server"]
+        llm_url = llm_url_from = llm_model = llm_model_from = ""
+        if here:
+            # Both of these are refusals with exactly one action in them, and both are free. Said
+            # before anything else so that a ComfyUI with no compiler in it, or a Setup node with no
+            # language model on it, is answered as itself rather than surfacing later as a failure
+            # that describes something else.
+            require_installed()
+            llm_url, llm_url_from = resolve_llm_url(machine["llm_url"])
+
         # Are the two halves talking about the same thing? The pack and the compiler are installed
         # separately and drift apart on purpose, and until this ran there was nothing anywhere that
         # noticed. Asked BEFORE the media travels, because a clip can be hundreds of megabytes and
         # the answer does not depend on it, and compared against what THIS graph is sending rather
         # than against everything the pack can do -- an older compiler is perfectly good for every
         # brief that uses nothing newer than itself, and breaking those would be worse than the
-        # drift. One small GET; see contract.py for what is a stop and what is a line.
+        # drift. See contract.py for what is a stop and what is a line.
         asset_fields, brief_fields, roles = payload_shape(written, brief, transcripts)
-        gaps = contract_differences(
-            # Capped rather than given the compile timeout. The contract is a static dict with no
-            # computation behind it, so a service that has not answered in half a minute is not
-            # working on it -- and waiting out a ten-minute compile timeout here would push the
-            # failure the NEXT request explains well past the point anybody is still watching.
-            fetch_contract(machine["server"], timeout=min(30.0, float(machine["timeout_s"]))),
-            asset_fields=asset_fields, brief_fields=brief_fields, roles=roles)
+        gaps = contract_differences(half.contract(), half=half, asset_fields=asset_fields,
+                                    brief_fields=brief_fields, roles=roles)
         stops = [g.message for g in gaps if g.stop]
         if stops:
             raise ServiceError("\n\n".join(stops))
 
-        body, handoff = compile_with_media(
-            server=machine["server"], written=written, sizing=sizing, sha_of=sha_of,
-            comfy_root=_comfy_root(), transcripts=transcripts, timeout=float(machine["timeout_s"]),
-            brief=brief)
+        if here:
+            # Which model, settled on this side so the refusal can name a field on the canvas. Only
+            # asked of the endpoint when the field is empty, so a graph that names its model spends
+            # no request on it.
+            llm_model, llm_model_from = resolve_llm_model(
+                llm_url, machine["llm_model"], timeout=min(30.0, float(machine["timeout_s"])))
+            # The very same request the other path posts, converted instead of sent: one function
+            # decides what this graph is asking for, and both paths obey it. The paths are left
+            # untranslated because there is nothing to translate to -- the compiler is reading this
+            # machine's own disk, through this machine's own spelling of it.
+            body = compile_here(
+                build_payload(assets=plan_assets(written, sizing, "", ""),
+                              transcripts=transcripts, **brief),
+                sha_of=sha_of, llm_url=llm_url, llm_model=llm_model,
+                timeout=float(machine["timeout_s"]))
+            handoff = ""
+        else:
+            body, handoff = compile_with_media(
+                server=machine["server"], written=written, sizing=sizing, sha_of=sha_of,
+                comfy_root=_comfy_root(), transcripts=transcripts,
+                timeout=float(machine["timeout_s"]), brief=brief)
 
         prompt, width, height, length, ref_sizing = render_fields(body)
         warning = check_mode(declared, str(body.get("mode", "")))
@@ -412,8 +450,30 @@ class OpenH3IRCompile(io.ComfyNode):
 
         wiring = body.get("wiring") or []
         conflict = len({w.get("sizing") for w in wiring if w.get("sizing")}) > 1
-        text = report(body, server=machine["server"], sizing_conflict=conflict,
+        text = report(body, compiler=half.where, sizing_conflict=conflict,
                       asked_seconds=seconds, bindings=bindings)
+        if here:
+            # Which endpoint wrote this, and which model on it. Named every time, because the brief
+            # is the model's work and two models write two different briefs from one sentence -- so
+            # a report that did not say which one had been used would be a record of a render nobody
+            # can reproduce.
+            text += "\n" + line("written by", f"{llm_model}  at {llm_url}")
+            # And where each of those two came from, but only when it was not this node. A value
+            # taken from the environment is a setting nobody can see on the canvas, and one that is
+            # never said out loud is one somebody spends an afternoon looking for.
+            for what, whence in (("language model", llm_url_from), ("model", llm_model_from)):
+                if whence != "the Setup node":
+                    text += "\n" + line("note", f"the {what} was not set on the Setup node. This "
+                                                f"graph used {whence}.")
+        elif machine["llm_url"] or machine["llm_model"]:
+            # Not a refusal: the graph is fine and it compiled where it said it would. But a field
+            # somebody filled in and this ignored is the kind of silence that has them changing it
+            # and wondering why nothing moves.
+            text += "\n" + line("note", (
+                f"this graph compiled on {half.where}, which writes with its own language model, so "
+                "the language model and model fields on the Setup node were not used. That service "
+                "reads its own H3IR_LLM_URL where it runs. Empty the service field to compile in "
+                "ComfyUI itself and have those two fields decide."))
         # Never silent: something was sent, against what the record says was used.
         mismatch = director_note(bool(director), str(body.get("director_used", "")))
         if mismatch:
@@ -629,7 +689,8 @@ class OpenH3IRCompile(io.ComfyNode):
 
 
 class OpenH3IRSetup(io.ComfyNode):
-    """The machine, not the shot: where the service is and which files to load.
+    """The machine, not the shot: which language model writes, where the compiler runs, and which
+    files to load.
 
     A picker, and only a picker. Every combo lists the files this install actually has, in both
     formats, and opens on one of them the way ComfyUI's own loaders do. Nothing is searched for by
@@ -637,6 +698,25 @@ class OpenH3IRSetup(io.ComfyNode):
     checkpoints somebody meant is not written in either filename, so the answer belongs to the person
     who put the files there. The pick is on the canvas where it can be read and changed, and the
     compile node's report names every file it loaded.
+
+    **The compiler runs here unless this node says otherwise**, which is what makes the pack an
+    all-in-one: nothing to start, no port, no second process. `server` empty means the `open-h3-ir`
+    installed in the Python ComfyUI is running. An address in it means a service at that address
+    instead, for a compile on another machine, and that path is not the poor relation -- it produces
+    the same brief from the same graph.
+
+    **The language model address lives on this node because there is nowhere else left to put it.**
+    The compiler writes the brief by asking an OpenAI-compatible endpoint, and that used to be an
+    environment variable set on a service nobody starts any more. `H3IR_LLM_URL` still works for
+    somebody who sets it before ComfyUI starts, and the report says when a value came from there
+    rather than from this node, because a setting nobody can see on the canvas has to be said out
+    loud somewhere.
+
+    **The two new fields are last on purpose.** ComfyUI saves a node's widget values as a positional
+    list -- measured on a saved workflow from this install, not assumed -- so a field inserted in the
+    middle of this schema silently shifts every value after it in every workflow anybody has saved.
+    New fields go on the end. The panel in `web/` lays them out however it likes; the order here is
+    what the canvas falls back to and what the saved file depends on.
     """
 
     @classmethod
@@ -645,14 +725,18 @@ class OpenH3IRSetup(io.ComfyNode):
             node_id="OpenH3IRSetup",
             display_name="OpenH3-IR Setup",
             category="OpenH3-IR",
-            search_aliases=["openh3", "h3", "ir", "service", "server", "gguf", "models"],
-            description=("Where the OpenH3-IR service is, and which five H3 files to load. Every H3 "
-                         "graph needs one: the compile node loads what you pick here."),
+            search_aliases=["openh3", "h3", "ir", "service", "server", "llm", "gguf", "models"],
+            description=("Which language model writes the brief, which five H3 files to load, and "
+                         "where the compiler runs. Every H3 graph needs one of these: the compile "
+                         "node loads what you pick here."),
             inputs=[
                 io.String.Input(
-                    "server", display_name="OpenH3-IR service", default=DEFAULT_SERVER,
-                    tooltip="Where the OpenH3-IR service is listening. Start one from the repo with "
-                            "h3ir serve. It can be another machine."),
+                    "server", display_name="compile on", default="",
+                    tooltip="Leave empty to compile in ComfyUI itself, which needs nothing started. "
+                            "To compile on another machine, put the address an OpenH3-IR service is "
+                            f"listening on there instead, for example {DEFAULT_SERVER}. That "
+                            "service uses its own language model, so the two fields below are then "
+                            "not used."),
                 io.Combo.Input(
                     "reference_model", display_name="ref2va model",
                     options=_model_options("diffusion_models", "unet_gguf"),
@@ -691,6 +775,18 @@ class OpenH3IRSetup(io.ComfyNode):
                     advanced=True,
                     tooltip="Writing a brief is one call to your language model, so this is as slow "
                             "as that model is."),
+                io.String.Input(
+                    "llm_url", display_name="language model", default="", optional=True,
+                    tooltip="The OpenAI-compatible endpoint the brief is written with, in full and "
+                            "ending in /v1, for example http://192.168.1.20:8000/v1. vLLM, "
+                            "llama.cpp's server, LM Studio, Ollama or a hosted API all work. It has "
+                            "to be able to read pictures: every reference in the tray is described "
+                            "through it."),
+                io.String.Input(
+                    "llm_model", display_name="model", default="", optional=True,
+                    tooltip="Which model on that endpoint, by the id it serves. Leave empty on an "
+                            "endpoint that serves one model. On one that serves several this will "
+                            "not guess, because no model list says which model can see."),
             ],
             outputs=[Setup.Output(display_name="setup")],
         )
@@ -698,9 +794,10 @@ class OpenH3IRSetup(io.ComfyNode):
     @classmethod
     def execute(cls, server: str, reference_model: str, frames_model: str, text_encoder: str,
                 video_vae: str, audio_vae: str, weight_dtype: str = "default",
-                timeout_s: int = 600) -> io.NodeOutput:
+                timeout_s: int = 600, llm_url: str = "", llm_model: str = "") -> io.NodeOutput:
         return io.NodeOutput(setup_bundle(
-            server=server, reference_model=reference_model, frames_model=frames_model,
+            server=server, llm_url=llm_url, llm_model=llm_model,
+            reference_model=reference_model, frames_model=frames_model,
             text_encoder=text_encoder, video_vae=video_vae, audio_vae=audio_vae,
             weight_dtype=weight_dtype, timeout_s=timeout_s))
 
@@ -754,8 +851,8 @@ class OpenH3IRDirector(io.ComfyNode):
             # rejected that sentence, so leaving it would have meant the node still speaking in the
             # voice he turned down, one step earlier than the panel.
             description=("Give a video a director. Whatever your own sentence leaves open gets "
-                         "shot, lit and scored the way they would. Seven to pick from, all of them "
-                         "editable, or write your own."),
+                         "shot and lit the way they would, with the music they would choose. "
+                         "Seven to pick from, all of them editable, or write your own."),
             inputs=[
                 io.String.Input(
                     "profile", display_name="direction", default="{}",

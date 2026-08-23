@@ -281,7 +281,7 @@ def test_saying_who_on_a_role_that_takes_nobodys_place_is_refused():
     rather than a no-op, because nothing downstream would ever mention it again."""
     with pytest.raises(ServiceError) as e:
         _tray(_swap("carguy", "the man in the plaid shirt", role="subject"))
-    assert "replace the one in the clip" in str(e.value)
+    assert "replace the one in an existing clip" in str(e.value)
     assert "something in the shot" in str(e.value)
 
 

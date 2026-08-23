@@ -20,9 +20,14 @@ Three answers and nothing in between:
 
 **Nothing here reads the compiler's source and nothing imports `h3ir`.** The snapshot is a generated
 JSON file beside this one, written by `h3ir contract` at build time, and the live contract arrives as
-an ordinary dict. Where that dict came from is the caller's business -- `GET /v1/contract` today, and
-an in-process `h3ir.contract.contract()` for a pack that ships against the published package. Both
-are the same comparison, which is the point of taking a dict.
+an ordinary dict. Where that dict came from is `Half`'s business -- `GET /v1/contract` for a service
+and `h3ir.contract.contract()` for the package in this Python. Both are the same comparison, which is
+the point of taking a dict.
+
+**`Half` is also how every message below knows what to call the other half.** The same difference has
+two different fixes depending on where the compiler is, and a sentence telling a ComfyUI user to
+restart a service they never started is the wrong-message failure this pack exists to prevent. So the
+comparison is written once and the naming comes from the half it is comparing against.
 """
 from __future__ import annotations
 
@@ -30,7 +35,9 @@ import json
 import pathlib
 from typing import Any
 
+from . import compiler as _compiler
 from . import tray as T
+from .h3ir_client import fetch_contract
 
 # The contract this pack was built against, as `h3ir contract` printed it. Read at import: it is a
 # few kilobytes, it is packaged beside this file, and a pack that cannot read its own snapshot is
@@ -45,34 +52,61 @@ BUILT_AGAINST: int = int(SNAPSHOT["contract_version"])
 FIRST_PUBLISHING_RELEASE = "0.3.0"
 
 
-def installed_contract() -> dict[str, Any] | None:
-    """The contract of the `open-h3-ir` installed in THIS Python, or None when there is none.
+class Half:
+    """The compiler this graph is about to use: what to call it, how to ask it what it takes, and
+    what a person does to change it.
 
-    The other way in. `h3ir_client.fetch_contract` asks a service over HTTP; this asks the package
-    that is about to do the work in the same process, which is the ordinary case for a pack that
-    ships as an all-in-one and only reaches for HTTP when the compiler lives on another machine.
+    **One object rather than a flag, because every one of these differs and none of them is
+    cosmetic.** A field the compiler does not understand is the same difference either way, and the
+    fix is `pip install --upgrade` in ComfyUI's Python on one path and `git pull` plus a restart on
+    somebody else's machine on the other. A reader handed the wrong one goes and fixes something
+    that is not broken.
 
-    **Whichever compiler is going to write the brief is the one that must be asked.** That is the
-    invariant, and it is easy to break in a way that produces confident nonsense: reading the local
-    package's contract while compiling against a remote service would compare this machine's
-    version to another machine's work and refuse graphs that are perfectly fine. So the caller picks
-    the source to match its own compile path, and never merges the two.
-
-    **Imported here rather than at module scope, and that is not style.** A pack whose import fails
-    is a pack ComfyUI drops off the menu with a traceback nobody can act on, and the compiler is a
-    separate installation that can be absent, half-installed, or broken. A pack talking to a remote
-    compiler needs no local package at all. None is an ordinary answer, and `differences()` turns it
-    into a sentence.
+    `contract` is a callable rather than a value so that nothing asks a compiler this graph is not
+    going to use. Reading the local package's contract while compiling over HTTP compares this
+    machine's version to another machine's work and refuses graphs that are perfectly fine, and it
+    is the kind of mistake that produces confident nonsense rather than an error.
     """
-    try:
-        from h3ir.contract import contract
-    except Exception:      # noqa: BLE001 - absent, broken, or half-installed are all "no contract"
-        return None
-    try:
-        got = contract()
-    except Exception:      # noqa: BLE001 - same answer; a client never fails on the CHECK
-        return None
-    return got if isinstance(got, dict) and "contract_version" in got else None
+
+    def __init__(self, *, where: str, update: str, ask):
+        self.where = where
+        self.update = update
+        self._ask = ask
+
+    def contract(self) -> dict[str, Any] | None:
+        """What this compiler says crosses between it and whatever drives it, or None when it is
+        older than the release that publishes one. Never raises: a client fails on the request, not
+        on the check."""
+        return self._ask()
+
+    def __repr__(self) -> str:                                # pragma: no cover - debugging only
+        return f"Half({self.where!r})"
+
+
+def the_compiler(server: str, *, timeout: float = 30.0) -> Half:
+    """Which compiler this graph compiles with, decided by the one field that decides it.
+
+    An address on the Setup node means the service at that address. An empty field means the
+    `open-h3-ir` installed in the Python ComfyUI is running, which is the ordinary case and the whole
+    point of the pack being an all-in-one.
+
+    **There is no merging and no fallback between the two.** A graph whose compile quietly moved
+    somewhere else would produce a brief nobody can account for, and a check that asked one compiler
+    about a compile the other is doing would refuse working graphs. So this returns one, and it is
+    the one that does the work.
+    """
+    address = (server or "").strip().rstrip("/")
+    if address:
+        return Half(
+            where=f"the OpenH3-IR service at {address}",
+            update=("Update open-h3-ir on the machine that service runs on, then restart "
+                    "h3ir serve."),
+            ask=lambda: fetch_contract(address, timeout=timeout))
+    return Half(
+        where="the open-h3-ir in ComfyUI's own Python",
+        update=("Update it where ComfyUI runs, with that Python: python -m pip install --upgrade "
+                f"'{_compiler.DISTRIBUTION}'."),
+        ask=_compiler.installed_contract)
 
 
 class Difference:
@@ -93,13 +127,17 @@ class Difference:
 
 # --------------------------------------------------------------------------- the comparison
 
-def differences(live: dict[str, Any] | None, *, asset_fields: tuple[str, ...] = (),
+def differences(live: dict[str, Any] | None, *, half: Half, asset_fields: tuple[str, ...] = (),
                 brief_fields: tuple[str, ...] = (),
                 roles: tuple[tuple[str, str], ...] = ()) -> list[Difference]:
     """Everything worth saying about the gap between this pack and the compiler it is talking to.
 
     `live` is the compiler's own contract, or None when it publishes none -- which is what an older
     release looks like from here and is a note rather than a failure.
+
+    `half` is which compiler that was, and it is what every message below says out loud. The same
+    difference has two fixes, one on each path, and naming the wrong one sends a reader to repair
+    something that is working.
 
     `asset_fields`, `brief_fields` and `roles` are what THIS graph is about to send:
     `h3ir_client.payload_shape` computes them from the same functions that build the request, so
@@ -108,21 +146,21 @@ def differences(live: dict[str, Any] | None, *, asset_fields: tuple[str, ...] = 
     """
     if live is None:
         return [Difference(
-            "the OpenH3-IR service does not publish a contract, so nothing about it was checked. "
-            f"That means it is older than open-h3-ir {FIRST_PUBLISHING_RELEASE}. Everything this "
-            "graph uses that it also has will work; anything newer will be refused by name when it "
-            "gets there. Update it where it runs to have the two checked before a queue instead.")]
+            f"{half.where} does not publish a contract, so nothing about it was checked. That "
+            f"means it is older than open-h3-ir {FIRST_PUBLISHING_RELEASE}. Everything this graph "
+            "uses that it also has will work; anything newer will be refused by name when it gets "
+            f"there. {half.update} Then the two are checked before a queue instead.")]
 
     out: list[Difference] = []
-    out += _fields_this_graph_needs(live, asset_fields, brief_fields)
-    out += _roles_this_graph_needs(live, roles)
-    out += _what_this_pack_cannot_reach(live)
-    out += _what_this_pack_shows_wrongly(live)
-    out += _limits_that_moved(live)
+    out += _fields_this_graph_needs(live, half, asset_fields, brief_fields)
+    out += _roles_this_graph_needs(live, half, roles)
+    out += _what_this_pack_cannot_reach(live, half)
+    out += _what_this_pack_shows_wrongly(live, half)
+    out += _limits_that_moved(live, half)
     return out
 
 
-def _fields_this_graph_needs(live: dict[str, Any], asset_fields: tuple[str, ...],
+def _fields_this_graph_needs(live: dict[str, Any], half: Half, asset_fields: tuple[str, ...],
                              brief_fields: tuple[str, ...]) -> list[Difference]:
     """A key in the request that the compiler does not take. The one that renders the wrong thing.
 
@@ -140,19 +178,19 @@ def _fields_this_graph_needs(live: dict[str, Any], asset_fields: tuple[str, ...]
             if field in known:
                 continue
             out.append(Difference(stop=True, message=(
-                f"this graph says something {where} that the OpenH3-IR service does not "
-                f"understand: `{field}`. It is newer than the service, and the service refuses a "
-                "field it does not know rather than ignoring it, because a dropped field comes "
-                "back as a brief that looks right and describes something else. Update open-h3-ir "
-                f"where the service runs (this pack was built against contract {BUILT_AGAINST}, "
-                f"the service reports {live.get('contract_version', '?')}), or take off whatever "
-                "in the graph fills that field.")))
+                f"this graph says something {where} that {half.where} does not understand: "
+                f"`{field}`. This node pack is newer than it, and it refuses a field it does not "
+                "know rather than ignoring it, because a dropped field comes back as a brief that "
+                f"looks right and describes something else. {half.update} (This pack was built "
+                f"against contract {BUILT_AGAINST}, and it reports "
+                f"{live.get('contract_version', '?')}.) Or take off whatever in the graph fills "
+                "that field.")))
     return out
 
 
 # The wire calls a picture an image; the panel calls it a picture. Every message below is read on a
 # canvas, so it uses the tray's words -- and so does the vocabulary inside it: somebody set that slot
-# from a dropdown that said "replace the one in the clip" and has never seen the word
+# from a dropdown that said "replace the one in an existing clip" and has never seen the word
 # `replacement_subject`. The token is kept in brackets on the one that failed, because that is the
 # string they would search for in the API documentation, and dropped everywhere else.
 KIND_WORD = {"image": "a picture", "video": "a clip", "audio": "a sound"}
@@ -164,7 +202,7 @@ def _in_the_panels_words(kind: str, role: str) -> str:
     return T.WORDS_FOR_ROLE.get(TRAY_KIND.get(kind, ""), {}).get(role, role)
 
 
-def _roles_this_graph_needs(live: dict[str, Any], roles: tuple[tuple[str, str], ...]
+def _roles_this_graph_needs(live: dict[str, Any], half: Half, roles: tuple[tuple[str, str], ...]
                             ) -> list[Difference]:
     """A slot set to a job the compiler has no name for.
 
@@ -183,13 +221,13 @@ def _roles_this_graph_needs(live: dict[str, Any], roles: tuple[tuple[str, str], 
         offer = ", ".join(f'"{_in_the_panels_words(kind, r)}"' for r in takes)
         out.append(Difference(stop=True, message=(
             f'a slot in the tray is set to "{_in_the_panels_words(kind, role)}" (`{role}`), and '
-            "the OpenH3-IR service has no such job. This node pack is newer than the service. "
-            "Update open-h3-ir where the service runs, or set that slot to one of the jobs it does "
-            f"take for {KIND_WORD.get(kind, kind)}: {offer}.")))
+            f"{half.where} has no such job. This node pack is newer than it. {half.update} Or set "
+            f"that slot to one of the jobs it does take for {KIND_WORD.get(kind, kind)}: "
+            f"{offer}.")))
     return out
 
 
-def _what_this_pack_cannot_reach(live: dict[str, Any]) -> list[Difference]:
+def _what_this_pack_cannot_reach(live: dict[str, Any], half: Half) -> list[Difference]:
     """A job the compiler takes and this pack cannot offer. The drift that already shipped once.
 
     `placed_subject` and `replacement_subject` reached the compiler, the service and the tray's
@@ -208,14 +246,13 @@ def _what_this_pack_cannot_reach(live: dict[str, Any]) -> list[Difference]:
             # because it has never heard of them.
             job = "job" if len(extra) == 1 else "jobs"
             out.append(Difference(
-                f"the OpenH3-IR service takes {len(extra)} {job} for {KIND_WORD.get(kind, kind)} "
-                f"that this node pack cannot offer: {', '.join(extra)}. The service is newer than "
-                "the pack. Update the pack to reach them from the tray; nothing in this graph is "
-                "wrong."))
+                f"{half.where} takes {len(extra)} {job} for {KIND_WORD.get(kind, kind)} that this "
+                f"node pack cannot offer: {', '.join(extra)}. The compiler is newer than the pack. "
+                "Update the pack to reach them from the tray; nothing in this graph is wrong."))
     return out
 
 
-def _what_this_pack_shows_wrongly(live: dict[str, Any]) -> list[Difference]:
+def _what_this_pack_shows_wrongly(live: dict[str, Any], half: Half) -> list[Difference]:
     """The panel's own copies: the seven directions and the camera vocabulary.
 
     Never a stop, and the reason is worth knowing. The Director node sends the PROSE that is in its
@@ -229,19 +266,19 @@ def _what_this_pack_shows_wrongly(live: dict[str, Any]) -> list[Difference]:
     out = []
     if theirs.get("directors") and theirs["directors"] != mine.get("directors"):
         out.append(Difference(
-            "the seven directions this node pack ships are not the ones the OpenH3-IR service "
-            "publishes. Whichever is newer, what compiles is always the text in the Director "
-            "node's own box, so this render is exactly what the canvas showed. `h3ir directors` "
-            "where the service runs prints its versions."))
+            f"the seven directions this node pack ships are not the ones {half.where} publishes. "
+            "Whichever is newer, what compiles is always the text in the Director node's own box, "
+            "so this render is exactly what the canvas showed. Run `h3ir directors` against that "
+            "compiler to read its versions."))
     if theirs.get("camera_moves") and theirs["camera_moves"] != mine.get("camera_moves"):
         out.append(Difference(
-            "the camera vocabulary this node pack shows is not the one the OpenH3-IR service "
-            "publishes. The list is H3's own closed table, so a direction written against the "
-            "wrong one names moves the renderer cannot make. Update whichever half is older."))
+            f"the camera vocabulary this node pack shows is not the one {half.where} publishes. "
+            "The list is H3's own closed table, so a direction written against the wrong one names "
+            "moves the renderer cannot make. Update whichever half is older."))
     return out
 
 
-def _limits_that_moved(live: dict[str, Any]) -> list[Difference]:
+def _limits_that_moved(live: dict[str, Any], half: Half) -> list[Difference]:
     """A ceiling or a list of choices that differs, said in the words the user reads on the node.
 
     Never a stop. Every one of these is a number a surface restates so it can refuse or offer
@@ -269,8 +306,8 @@ def _limits_that_moved(live: dict[str, Any]) -> list[Difference]:
         if key not in theirs or key not in mine or theirs[key] == mine[key]:
             continue
         out.append(Difference(
-            f"this node pack and the OpenH3-IR service disagree about {phrase}: the pack shows "
-            f"{_plain(mine[key])} and the service says {_plain(theirs[key])}. The service is what "
+            f"this node pack and {half.where} disagree about {phrase}: the pack shows "
+            f"{_plain(mine[key])} and the compiler says {_plain(theirs[key])}. The compiler is what "
             "decides; the pack is what you pick from. Update whichever half is older."))
     return out
 

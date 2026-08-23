@@ -1,4 +1,4 @@
-"""The two HTTP routes the media tray's panel needs, and nothing else.
+"""The HTTP routes the pack's panels need, and nothing else.
 
 A browser cannot put a dropped file where the graph can read it, so the panel posts it here and the
 file lands in ComfyUI's own input folder under `openh3ir/`. What comes back is the annotated name
@@ -15,16 +15,30 @@ Nothing here decides anything about a render. The probe route exists so the pane
 is not on this machine" instead of drawing an empty square, and the node re-reads every file itself
 when the graph runs: a stale duration in a saved workflow cannot change what gets sent.
 
+The three routes under `/openh3ir/llm/` and `/openh3ir/compiler` are what the Setup node's panel asks
+so somebody can find out whether an address answers, which models it serves and whether one of them
+can read a picture, without queueing a graph to discover it. Every one of them reports rather than
+decides: nothing here writes a widget, and the node re-resolves all of it at queue time from the
+values on the canvas.
+
+**Everything in them that talks to a network runs off the event loop.** ComfyUI serves its whole
+frontend from one aiohttp loop, and the compiler's client is ordinary blocking `httpx`, so calling it
+inline would freeze the canvas -- for everybody on that server -- for as long as a language model
+takes to answer. `run_in_executor` is what keeps a slow endpoint a slow button rather than a hung
+ComfyUI.
+
 Route shape and the `input/<pack>/` convention follow ComfyUI-Fantastic-MiniMaxH3-PromptBuilder's
 `web_api.py` (MIT), which is credited in README.md.
 """
 from __future__ import annotations
 
+import asyncio
+import functools
 import os
 import re
 import time
 
-from . import media
+from . import compiler, media
 
 try:  # pragma: no cover - only inside ComfyUI
     from aiohttp import web
@@ -144,3 +158,79 @@ if PromptServer is not None and web is not None:  # pragma: no cover - needs a r
             return web.json_response({"error": "no file asked about"}, status=400)
         return web.json_response({"file": annotated, "present": media.present(annotated),
                                   "kind": kind_for(annotated), **media.probe(annotated)})
+
+    async def _off_the_loop(fn, *args, **kw):
+        """Run a blocking call in a thread, so a slow endpoint never stops ComfyUI serving pages."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, functools.partial(fn, *args, **kw))
+
+    @routes.get("/openh3ir/compiler")
+    async def openh3ir_compiler(request):
+        """Whether the pack can compile in this ComfyUI at all, and which build would do it.
+
+        The one question the panel cannot answer from the canvas: `open-h3-ir` is a separate
+        installation and it can be absent, half-installed or older than this pack. Three states
+        rather than two, because absent and broken have two different fixes.
+
+        Importing a package is disk work and can be slow the first time, so it goes off the loop
+        like the rest.
+        """
+        state, detail = await _off_the_loop(compiler.availability)
+        live = await _off_the_loop(compiler.installed_contract) if state == "ok" else None
+        # What the environment would give if the node's two fields are left empty. The panel says so
+        # before a queue: an empty field that is not really empty is the most confusing state this
+        # node has, and until now it was a line in the report that only appeared after a run.
+        env = compiler.environment_defaults()
+        return web.json_response({
+            "state": state,
+            "detail": detail,
+            "version": (await _off_the_loop(compiler.package_version)) if state == "ok" else "",
+            "contract_version": (live or {}).get("contract_version"),
+            "distribution": compiler.DISTRIBUTION,
+            "env_url": env["url"],
+            "env_model": env["model"],
+        })
+
+    @routes.post("/openh3ir/llm/models")
+    async def openh3ir_llm_models(request):
+        """What is answering at an address and which models it serves.
+
+        `choose_from` is the list to offer. It can be shorter than `ids`: one set of weights
+        published under several names is one model, and offering the same model twice would be this
+        panel inventing a decision.
+        """
+        try:
+            body = await request.json()
+        except Exception:                               # noqa: BLE001 - a malformed body is a 400
+            return web.json_response({"error": "expected a JSON body with a url in it"}, status=400)
+        url = str((body or {}).get("url") or "").strip()
+        if not url:
+            return web.json_response({"error": "no address to test. Type the language model's "
+                                               "address first."}, status=400)
+        return web.json_response(await _off_the_loop(compiler.endpoint_report, url,
+                                                     timeout=float(body.get("timeout") or 20.0)))
+
+    @routes.post("/openh3ir/llm/vision")
+    async def openh3ir_llm_vision(request):
+        """Whether one model can read a picture, by sending it one.
+
+        The only way to know. No model list on any of these servers reports vision, and a text-only
+        model answers every other check perfectly and then reads none of the tray, so the brief comes
+        back describing pictures nobody looked at.
+
+        It costs one request to the model, so the panel asks for it rather than doing it on every
+        keystroke, and `ok` comes back as null when the check could not be completed: a timeout says
+        nothing either way, and reporting a verdict from one would be guessing about the thing this
+        was asked to measure.
+        """
+        try:
+            body = await request.json()
+        except Exception:                               # noqa: BLE001 - a malformed body is a 400
+            return web.json_response({"error": "expected a JSON body with a url and a model in it"},
+                                     status=400)
+        url = str((body or {}).get("url") or "").strip()
+        model = str((body or {}).get("model") or "").strip()
+        if not url:
+            return web.json_response({"error": "no address to test"}, status=400)
+        return web.json_response(await _off_the_loop(compiler.can_it_see, url, model,
+                                                     timeout=float(body.get("timeout") or 120.0)))

@@ -256,7 +256,7 @@ def test_the_silence_flag_is_labelled_with_what_it_actually_does():
     label = next(_str(kw.get("display_name")) for _k, i, kw in COMPILE if i == "silent")
     assert label == "no music"
     tip = next(_str(kw.get("tooltip")) for _k, i, kw in COMPILE if i == "silent")
-    assert "score only" in tip and "Ambient" in tip, \
+    assert "music only" in tip and "Ambient" in tip, \
         "the tooltip has to say what survives, or the flag reads as a mute button"
 
 
@@ -433,6 +433,61 @@ def test_main_is_one_sentence_a_tray_a_setup_and_the_knobs():
     assert ids == ["intent", "seconds", "aspect", "creativity", "silent", "shots", "setup",
                    "megapixels", "spoken_language", "director", "media", "sizing", "seed",
                    "effort"], ids
+
+
+def test_the_setup_nodes_inputs_are_in_the_order_every_saved_workflow_depends_on():
+    """ComfyUI saves widget values as a POSITIONAL list, so this order is an on-disk format.
+
+    MEASURED on a saved workflow from a real install rather than assumed. `OpenH3IRSetup` reads back
+    as `["http://127.0.0.1:8420", "<ref2va file>", "<fl2va file>", ...]` -- no names anywhere. So an
+    input inserted in the middle of this schema shifts every value after it in every workflow anybody
+    has saved: their checkpoint pick becomes a VAE pick, with nothing on screen to say why.
+
+    **New inputs go on the end.** That is why the two newest fields, which are also the two most
+    important ones, are last. Where they SIT is the panel's business; where they are declared is this
+    list, and this list is what a saved file depends on.
+
+    `llm_url` and `llm_model` are optional for the same mechanical reason `director` is: ComfyUI
+    publishes every required input ahead of every optional one, so making one required would move
+    the required block and refuse every API-format graph written before they existed.
+    """
+    ids = [i for _k, i, _kw in SETUP]
+    assert ids == ["server", "reference_model", "frames_model", "text_encoder", "video_vae",
+                   "audio_vae", "weight_dtype", "timeout_s", "llm_url", "llm_model"], ids
+    for late in ("llm_url", "llm_model"):
+        kw = next(kw for _k, i, kw in SETUP if i == late)
+        assert _str(kw.get("optional")) or kw.get("optional") is not None, (
+            f"{late} is required, which moves the required block and refuses every API-format graph "
+            "written before it existed")
+
+
+def test_an_empty_compile_target_is_the_ordinary_case_and_the_field_says_so():
+    """The default decides what a NEW node does, and the ordinary case is now the one that needs
+    nothing started. A saved workflow keeps whatever address it stored, which is right: somebody who
+    typed one meant it."""
+    kw = next(kw for _k, i, kw in SETUP if i == "server")
+    # The literal itself, not `_str` of it. `_str` answers "" for anything that is not a string
+    # literal, so `default=DEFAULT_SERVER` reads as empty through it -- which is exactly the defect
+    # this is meant to catch, and the first draft of this test let it through. Caught by the
+    # falsification run, which reported a guard that did not fire.
+    default = kw.get("default")
+    assert isinstance(default, ast.Constant) and default.value == "", (
+        "a new Setup node points at a service nobody started; the default has to be the empty "
+        f"string, and it is {ast.dump(default) if default is not None else 'absent'}")
+    tip = _str(kw.get("tooltip"))
+    assert "empty" in tip.lower(), "the field does not say what leaving it empty does"
+    assert "another machine" in tip, "the field does not say what putting an address in it does"
+
+
+def test_the_language_model_field_says_what_shape_an_address_has():
+    """It is the one thing a person has to fill in, and `192.168.1.20:8000` without a scheme is the
+    commonest way to get it wrong. The example carries the shape."""
+    kw = next(kw for _k, i, kw in SETUP if i == "llm_url")
+    tip = _str(kw.get("tooltip"))
+    assert "/v1" in tip, "the tooltip does not show that the address ends in /v1"
+    assert "http://" in tip, "the tooltip gives no example with a scheme in it"
+    assert "pictures" in tip or "picture" in tip, \
+        "the tooltip does not say the model has to be able to see"
 
 
 def test_the_director_is_optional_so_older_graphs_still_submit():

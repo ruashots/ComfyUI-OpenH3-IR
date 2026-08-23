@@ -102,7 +102,7 @@ class Panel {
      * a picker and a `called` field saying the same thing twice — the owner's words: "'start from',
      * 'called', duplication, just put a damn edit name on it." So the name IS the field: type in it
      * to rename what you are editing, or open the list beside it to load another. */
-    this.nameIn = el("input", { class: "oh3d-in", placeholder: "name this direction",
+    this.nameIn = el("input", { class: "oh3d-in", placeholder: "name this director",
       title: "What this direction is called. Type here to rename it, then press save to keep the "
              + "change. The name never reaches the model, only the words in the box, so call it "
              + "whatever you like." });
@@ -148,7 +148,7 @@ class Panel {
                      + "later." }));
     this.notesIn = el("textarea", { class: "oh3d-notes", placeholder: PLACEHOLDER, spellcheck: true,
       title: "How this director works. It steers the writing rather than commanding it: nothing "
-             + "here is enforced, and your own sentence always comes first." });
+             + "here is enforced, and your own prompt always comes first." });
     this.notesIn.addEventListener("input", () => { this.armed = null; this.say(""); this.commit(); });
 
     this.count = el("span", { class: "oh3d-count" });

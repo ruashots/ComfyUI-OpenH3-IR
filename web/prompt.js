@@ -58,7 +58,7 @@ const SPEAKS_CLOSE = '")';
  * Where that function raises -- an opener with no closer -- this returns the piece marked wrong, so
  * the box can say so while it is being typed instead of at the moment somebody presses Run.
  */
-function pieces(text) {
+export function pieces(text) {
   const src = String(text ?? "");
   const out = [];
   let plain = [];
@@ -109,7 +109,7 @@ function trayState(node) {
   }
 }
 
-function trayOf(node) {
+export function trayOf(node) {
   try {
     const slots = JSON.parse(trayState(node)?.value || "[]");
     return Array.isArray(slots) ? slots : null;
@@ -127,6 +127,37 @@ function viewUrl(annotated) {
     type: "input",
   });
   return "/api/view?" + params;
+}
+
+/** Everything the Main panel's report line says, computed HERE.
+ *
+ *  The panel writes the sentences and this decides the facts, because the parse and the walk to the
+ *  tray already live in this file and a second copy of either would be a second thing to keep right.
+ *  Nothing new is derived: `pieces` is the same parse the mentions are drawn from, and `trayOf` is
+ *  the same live walk the picker uses.
+ */
+export function promptFacts(node, text) {
+  const parts = pieces(text);
+  // Not connected and connected-but-empty are two different sentences, and `trayOf` answers `[]`
+  // to both, so the link itself is what says which.
+  const connected = Boolean(trayState(node));
+  const slots = connected ? (trayOf(node) || []) : [];
+  const known = new Map(slots.map((s) => [String(s.label), String(s.kind || "picture")]));
+  const named = { picture: 0, video: 0, sound: 0 };
+  const unknown = [];
+  let locked = 0;
+  let unclosed = false;
+  for (const part of parts) {
+    if (part.kind === "spoken") locked += 1;
+    else if (part.kind === "unclosed") unclosed = true;
+    else if (part.kind === "mention") {
+      const kind = known.get(part.label);
+      if (kind) named[kind] = (named[kind] || 0) + 1;
+      else unknown.push(part.label);
+    }
+  }
+  return { written: Boolean(String(text ?? "").trim()), connected, tray: slots,
+           trayCount: slots.length, named, unknown, locked, unclosed };
 }
 
 class Picker {
@@ -513,6 +544,20 @@ textarea.oh3-chiptext::selection{background:rgba(235,130,25,.34);color:#f3efe6;}
   color:rgba(243,239,230,.72);}
 `;
 
+/** Wire the picker and the mentions onto a textarea somebody else owns.
+ *
+ *  It used to find ComfyUI's own multiline widget and attach there. The Main panel draws its own
+ *  box now, because a host widget cannot sit inside a panel and still look like one surface, so
+ *  this takes whatever textarea it is handed. Nothing in either class had to change: both measure
+ *  their metrics off the element rather than declaring them.
+ */
+export function attachPrompt(textarea, node) {
+  if (!textarea || textarea._oh3Picker) return;
+  textarea._oh3Picker = new Picker(textarea, node);
+  node._oh3Chips = new Chips(textarea, node);
+  return node._oh3Chips;
+}
+
 app.registerExtension({
   name: "openh3ir.prompt",
   init() {
@@ -522,36 +567,6 @@ app.registerExtension({
   },
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData?.name !== NODE) return;
-    const onCreated = nodeType.prototype.onNodeCreated;
-    nodeType.prototype.onNodeCreated = function () {
-      const r = onCreated?.apply(this, arguments);
-      // Six lines of prompt, not the stock three: the sentence IS the interface here, and half of
-      // a two-clause sentence hidden behind a scrollbar reads as a smaller tool than this is.
-      const w0 = (this.widgets || []).find((x) => x.name === "intent");
-      if (w0) {
-        w0.options = w0.options || {};
-        w0.options.getMinHeight = () => 124;
-        const fit = this.computeSize();
-        this.setSize([Math.max(this.size[0], fit[0]), Math.max(this.size[1], fit[1])]);
-      }
-      // The multiline widget's element appears after creation; attach when it exists.
-      requestAnimationFrame(() => {
-        const w = (this.widgets || []).find((x) => x.name === "intent");
-        // `element` on a current frontend, `inputEl` only as a fallback: it is the same textarea
-        // under a deprecated name, and reading it prints a deprecation notice in the console.
-        const el = w?.element;
-        const ta = el?.tagName === "TEXTAREA" ? el
-          : (el?.querySelector?.("textarea") || w?.inputEl);
-        if (!ta || ta._oh3Picker) return;
-        ta._oh3Picker = new Picker(ta, this);
-        this._oh3Chips = new Chips(ta, this);
-        // A value written straight into the widget -- a workflow being loaded, an undo, the API --
-        // never fires an input event, so the mirror is told after the widget has taken it.
-        const set = w.options?.setValue;
-        if (set) w.options.setValue = (v) => { set.call(w.options, v); this._oh3Chips.paint(); };
-      });
-      return r;
-    };
     // The canvas redraws when anything changes, including a slot being renamed on the Media node,
     // which is the one thing that can turn a mention wrong without this box being touched.
     const onDraw = nodeType.prototype.onDrawForeground;

@@ -31,12 +31,19 @@ import re
 
 import pytest
 
+from openh3ir import compiler as COMPILER
 from openh3ir import contract as PACK
 from openh3ir import tray as T
 from openh3ir.h3ir_client import ServiceError, fetch_contract, payload_shape
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 PACK_DIR = REPO
+
+# The two compilers a graph can have, as `contract.the_compiler` builds them. Most of this file is
+# about a service, because that is where the wording started; the tests that hold the in-process
+# wording to the same standard say so by name.
+SERVICE = PACK.the_compiler("http://127.0.0.1:8420")
+HERE = PACK.the_compiler("")
 
 BRIEF = dict(intent="a man crosses a wet yard", seconds=5.0, aspect="16:9",
              creativity="balanced", effort="standard", seed=7, silent=False, shots="auto",
@@ -137,7 +144,7 @@ def test_the_pack_never_imports_the_compiler_while_it_is_being_imported():
         collision this pack has always refused.
 
     So: no `h3ir` import at module scope anywhere in the pack. Inside a function is fine, and
-    `contract.installed_contract` is the one that does it.
+    `compiler.py` is the module they live in.
     """
     for path in sorted(PACK_DIR.glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -156,10 +163,17 @@ def test_the_pack_never_imports_the_compiler_while_it_is_being_imported():
                     "the function that needs it and give it an answer when it is not there.")
 
 
-def test_the_one_place_that_does_import_the_compiler_is_the_one_that_must():
-    """A lazy import is cheap to add and easy to spread. Every one of them is a place that fails
-    when the compiler is absent, so there is exactly one and it is the one with an answer for
-    that."""
+def test_every_reach_for_the_compiler_is_in_the_one_module_that_owns_them():
+    """A lazy import is cheap to add and easy to spread, and every one of them is a place that
+    breaks when the compiler is absent.
+
+    The rule used to be one function, which was right while the only thing the pack ever asked the
+    compiler was its contract. An all-in-one asks it for more than that -- it runs the compile, it
+    probes a language model, it reports whether the package is there at all -- so the rule that
+    survives is that all of them are in ONE module and every one of them is inside a function.
+    `compiler.py` is that module, its whole subject is the compiler, and it is the one place anybody
+    has to read to find out what this pack does when there is no compiler installed.
+    """
     where = []
     for path in sorted(PACK_DIR.glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -171,9 +185,11 @@ def test_the_one_place_that_does_import_the_compiler_is_the_one_that_must():
                          else [node.module or ""] if isinstance(node, ast.ImportFrom) else [])
                 if any(n.split(".")[0] == "h3ir" for n in names):
                     where.append(f"{path.name}:{fn.name}")
-    assert where == ["contract.py:installed_contract"], (
-        f"the compiler is imported in {where}. Each one is a place that breaks when it is absent; "
-        "there is one, and it answers None.")
+    stray = sorted({w for w in where if not w.startswith("compiler.py:")})
+    assert where, "nothing in this pack imports the compiler at all, so this test is blind"
+    assert not stray, (
+        f"the compiler is imported outside compiler.py, in {stray}. Each one is a place that breaks "
+        "when it is absent, and they are meant to be findable in one file.")
 
 
 # --------------------------------------------------- asking whichever compiler will do the work
@@ -191,13 +207,13 @@ def test_the_contract_can_be_read_from_a_compiler_in_the_same_python():
     ordinary case and the rest of this file is about what happens then; this one asks whether the
     in-process path works at all.
     """
-    got = PACK.installed_contract()
+    got = COMPILER.installed_contract()
     assert got is not None, "no compiler was importable, so this test proved nothing"
     assert got["contract_version"] == PACK.SNAPSHOT["contract_version"]
     assert got["digests"] == PACK.SNAPSHOT["digests"], \
         "the compiler in this Python and the pack's snapshot disagree; regenerate the snapshot"
     # and it is the same comparison whichever way the dict arrived
-    assert PACK.differences(got, asset_fields=("path", "role"), brief_fields=("intent",)) == []
+    assert PACK.differences(got, half=SERVICE, asset_fields=("path", "role"), brief_fields=("intent",)) == []
 
 
 def test_no_compiler_in_this_python_is_an_answer_rather_than_a_crash():
@@ -224,7 +240,7 @@ def test_no_compiler_in_this_python_is_an_answer_rather_than_a_crash():
     # that happens on a machine where the package really is absent.
     builtins.__import__ = refuse
     try:
-        assert PACK.installed_contract() is None
+        assert COMPILER.installed_contract() is None
     finally:
         builtins.__import__ = real
 
@@ -239,24 +255,38 @@ def test_a_compiler_that_answers_with_rubbish_is_treated_as_absent():
         original = real.contract
         real.contract = broken
         try:
-            assert PACK.installed_contract() is None, broken
+            assert COMPILER.installed_contract() is None, broken
         finally:
             real.contract = original
 
 
-def test_the_pack_never_reaches_for_the_compiler_while_it_is_talking_to_a_service():
+def test_the_pack_never_reaches_for_the_compiler_while_it_is_talking_to_a_service(monkeypatch):
     """The invariant that stops the check producing confident nonsense.
 
     Reading the local package's contract while compiling against a remote service compares this
-    machine's version to another machine's work, and refuses graphs that are fine. So the two
-    sources are separate functions and the caller picks one to match its own compile path. The
-    compile node talks HTTP today, so it asks over HTTP.
+    machine's version to another machine's work and refuses graphs that are fine. So one source is
+    picked to match the compile path, and neither is a fallback for the other.
+
+    **Asked by watching, not by reading.** This used to assert that the string `installed_contract(`
+    was absent from `nodes.py`, which was true right up until the node legitimately needed both --
+    and a check on source text cannot tell "calls the wrong one" from "mentions the right one". So
+    both sources are replaced with counters and each half is driven for real.
     """
-    source = (PACK_DIR / "nodes.py").read_text(encoding="utf-8")
-    assert "fetch_contract(" in source, "the node stopped asking the service it compiles against"
-    assert "installed_contract(" not in source, (
-        "the node reads the contract of the compiler in this Python while it compiles over HTTP. "
-        "Those are two different compilers and comparing them refuses graphs that are fine.")
+    called: list[str] = []
+    monkeypatch.setattr(PACK, "fetch_contract",
+                        lambda *a, **kw: called.append("http") or dict(PACK.SNAPSHOT))
+    monkeypatch.setattr(COMPILER, "installed_contract",
+                        lambda: called.append("here") or dict(PACK.SNAPSHOT))
+
+    assert PACK.the_compiler("http://192.0.2.7:8420").contract()
+    assert called == ["http"], (
+        "a graph compiling on a service asked something other than that service what it takes: "
+        f"{called}")
+
+    called.clear()
+    assert PACK.the_compiler("").contract()
+    assert called == ["here"], (
+        f"a graph compiling in this Python asked something other than this Python: {called}")
 
 
 # ------------------------------------------------- everything the pack can say is something it takes
@@ -426,7 +456,7 @@ def test_the_refusals_the_client_groups_are_all_refusals_the_compiler_still_make
 
 def test_an_agreeing_pair_says_nothing_at_all():
     """The common case. A note nobody needs is noise in a report people are meant to read."""
-    assert PACK.differences(_live(), asset_fields=("path", "role"), brief_fields=("intent",),
+    assert PACK.differences(_live(), half=SERVICE, asset_fields=("path", "role"), brief_fields=("intent",),
                             roles=(("image", "subject"),)) == []
 
 
@@ -434,7 +464,7 @@ def test_a_service_too_old_to_publish_a_contract_is_a_note_and_never_a_failure()
     """A service that predates the endpoint still compiles every brief that uses nothing newer than
     itself. Refusing those would be this pack breaking working setups to protect a feature they are
     not using."""
-    gaps = PACK.differences(None, asset_fields=("path",), brief_fields=("intent",))
+    gaps = PACK.differences(None, half=SERVICE, asset_fields=("path",), brief_fields=("intent",))
     assert len(gaps) == 1 and not gaps[0].stop
     assert PACK.FIRST_PUBLISHING_RELEASE in gaps[0].message, \
         "the note does not say which version to install"
@@ -444,7 +474,7 @@ def test_a_field_the_service_cannot_take_stops_the_graph_and_names_it():
     """The failure that used to be silent. Stopped before any media travels, because a clip can be
     hundreds of megabytes and the answer does not depend on it."""
     older = _live(asset_fields=[f for f in PACK.SNAPSHOT["asset_fields"] if f != "replaces"])
-    gaps = PACK.differences(older, asset_fields=("path", "role", "replaces"),
+    gaps = PACK.differences(older, half=SERVICE, asset_fields=("path", "role", "replaces"),
                             brief_fields=("intent",))
     stops = [g for g in gaps if g.stop]
     assert len(stops) == 1, [g.message for g in gaps]
@@ -455,7 +485,7 @@ def test_a_field_the_service_cannot_take_stops_the_graph_and_names_it():
 
 def test_a_brief_setting_the_service_cannot_take_stops_the_graph_too():
     older = _live(brief_fields=[f for f in PACK.SNAPSHOT["brief_fields"] if f != "director_profile"])
-    stops = [g for g in PACK.differences(older, asset_fields=("path",),
+    stops = [g for g in PACK.differences(older, half=SERVICE, asset_fields=("path",),
                                          brief_fields=("intent", "director_profile")) if g.stop]
     assert len(stops) == 1 and "`director_profile`" in stops[0].message
 
@@ -464,7 +494,7 @@ def test_the_same_older_service_is_fine_for_a_graph_that_does_not_use_the_new_th
     """The whole reason the check reads the payload rather than the pack's capabilities. Two halves
     at different versions have to keep working for everything that did not change."""
     older = _live(asset_fields=[f for f in PACK.SNAPSHOT["asset_fields"] if f != "replaces"])
-    gaps = PACK.differences(older, asset_fields=("path", "role", "note"), brief_fields=("intent",),
+    gaps = PACK.differences(older, half=SERVICE, asset_fields=("path", "role", "note"), brief_fields=("intent",),
                             roles=(("image", "subject"),))
     assert [g for g in gaps if g.stop] == []
 
@@ -472,15 +502,15 @@ def test_the_same_older_service_is_fine_for_a_graph_that_does_not_use_the_new_th
 def test_a_slot_set_to_a_job_the_service_has_no_name_for_stops_the_graph():
     roles = json.loads(json.dumps(PACK.SNAPSHOT["roles"]))
     roles["image"] = [r for r in roles["image"] if r != "replacement_subject"]
-    gaps = PACK.differences(_live(roles=roles), asset_fields=("path",), brief_fields=("intent",),
+    gaps = PACK.differences(_live(roles=roles), half=SERVICE, asset_fields=("path",), brief_fields=("intent",),
                             roles=(("image", "replacement_subject"), ("video", "edit_source")))
     stops = [g for g in gaps if g.stop]
     assert len(stops) == 1
     assert "`replacement_subject`" in stops[0].message, \
         "the token is gone, and it is the string somebody searches the API docs for"
     # And it is said in the words the person actually chose from, not in the wire's. They set that
-    # slot from a dropdown reading "replace the one in the clip" and have never seen the token.
-    assert '"replace the one in the clip"' in stops[0].message, \
+    # slot from a dropdown reading "replace the one in an existing clip" and have never seen the token.
+    assert '"replace the one in an existing clip"' in stops[0].message, \
         "the refusal names the job in the wire's words rather than the panel's"
     assert '"first frame"' in stops[0].message, \
         "the jobs it offers instead are listed as tokens rather than as what the dropdown says"
@@ -493,7 +523,7 @@ def test_a_job_the_service_takes_and_the_pack_cannot_offer_is_reported_and_never
     fine; what they have lost is a choice they never saw."""
     roles = json.loads(json.dumps(PACK.SNAPSHOT["roles"]))
     roles["image"] = roles["image"] + ["hologram"]
-    gaps = PACK.differences(_live(roles=roles), asset_fields=("path",), brief_fields=("intent",))
+    gaps = PACK.differences(_live(roles=roles), half=SERVICE, asset_fields=("path",), brief_fields=("intent",))
     assert [g for g in gaps if g.stop] == []
     assert any("hologram" in g.message and "Update the pack" in g.message for g in gaps), \
         [g.message for g in gaps]
@@ -503,7 +533,7 @@ def test_a_drifted_direction_is_reported_and_never_stops_a_render():
     """The Director node sends the prose in its box, so what compiles is always what the canvas
     showed. A drifted copy cannot render the wrong thing; it can only teach the wrong thing."""
     digests = dict(PACK.SNAPSHOT["digests"], directors="0000000000000000")
-    gaps = PACK.differences(_live(digests=digests), asset_fields=("path",),
+    gaps = PACK.differences(_live(digests=digests), half=SERVICE, asset_fields=("path",),
                             brief_fields=("intent",))
     assert [g for g in gaps if g.stop] == []
     assert any("seven directions" in g.message for g in gaps), [g.message for g in gaps]
@@ -511,7 +541,7 @@ def test_a_drifted_direction_is_reported_and_never_stops_a_render():
 
 def test_a_drifted_camera_vocabulary_is_reported():
     digests = dict(PACK.SNAPSHOT["digests"], camera_moves="0000000000000000")
-    gaps = PACK.differences(_live(digests=digests), asset_fields=("path",),
+    gaps = PACK.differences(_live(digests=digests), half=SERVICE, asset_fields=("path",),
                             brief_fields=("intent",))
     assert any("camera vocabulary" in g.message for g in gaps), [g.message for g in gaps]
 
@@ -529,7 +559,7 @@ def test_a_limit_that_moved_is_reported_in_words_a_user_reads(key, value, phrase
     with a message, rather than a render nobody can explain. So: a note, never a stop, and written
     as what it means rather than as the name of a field."""
     limits = dict(PACK.SNAPSHOT["limits"], **{key: value})
-    gaps = PACK.differences(_live(limits=limits), asset_fields=("path",), brief_fields=("intent",))
+    gaps = PACK.differences(_live(limits=limits), half=SERVICE, asset_fields=("path",), brief_fields=("intent",))
     assert [g for g in gaps if g.stop] == []
     said = [g.message for g in gaps if phrase in g.message]
     assert said, [g.message for g in gaps]
@@ -541,10 +571,49 @@ def test_every_difference_names_the_service_it_is_about():
     in it is a sentence somebody has to work out the owner of."""
     older = _live(asset_fields=[f for f in PACK.SNAPSHOT["asset_fields"] if f != "replaces"],
                   limits=dict(PACK.SNAPSHOT["limits"], max_pinned_shots=4))
-    gaps = PACK.differences(older, asset_fields=("path", "replaces"), brief_fields=("intent",))
+    gaps = PACK.differences(older, half=SERVICE, asset_fields=("path", "replaces"), brief_fields=("intent",))
     assert gaps
     for gap in gaps:
         assert "OpenH3-IR" in gap.message, f"nothing names the pack or the service: {gap.message}"
+        assert SERVICE.where in gap.message, (
+            f"the difference does not say which compiler it is about: {gap.message}")
+
+
+def test_a_difference_about_the_compiler_in_this_python_never_says_service():
+    """The same differences, worded for the half they are actually about.
+
+    This is the failure the all-in-one makes easy and it is the wrong-message kind, not the missing
+    one: every sentence in the comparison was written when the only other half was a service, and
+    left alone they tell somebody who never started a service to update it and restart `h3ir serve`.
+    They then go looking for a process that does not exist. So the naming comes from the half, and
+    every sentence is checked against the one it was produced for.
+    """
+    older = _live(asset_fields=[f for f in PACK.SNAPSHOT["asset_fields"] if f != "replaces"],
+                  limits=dict(PACK.SNAPSHOT["limits"], max_pinned_shots=4),
+                  digests=dict(PACK.SNAPSHOT["digests"], directors="0000000000000000"))
+    gaps = PACK.differences(older, half=HERE, asset_fields=("path", "replaces"),
+                            brief_fields=("intent",))
+    assert gaps
+    for gap in gaps:
+        assert HERE.where in gap.message, (
+            f"the difference does not name the compiler it is about: {gap.message}")
+        assert "service" not in gap.message.lower(), (
+            "a graph that compiles inside ComfyUI is told about a service it never started: "
+            f"{gap.message}")
+        assert "h3ir serve" not in gap.message, (
+            f"the fix names a command that has nothing to do with this graph: {gap.message}")
+
+
+def test_a_compiler_in_this_python_too_old_to_publish_a_contract_says_what_to_upgrade():
+    """The one difference an all-in-one install can really hit: `open-h3-ir` is installed, and it
+    predates the release that publishes a contract at all. A note rather than a failure, and the fix
+    is a pip line rather than a service to restart."""
+    gaps = PACK.differences(None, half=HERE, asset_fields=("path",), brief_fields=("intent",))
+    assert len(gaps) == 1 and not gaps[0].stop
+    assert PACK.FIRST_PUBLISHING_RELEASE in gaps[0].message
+    assert "pip install" in gaps[0].message, \
+        f"the note does not say how to update the compiler in this Python: {gaps[0].message}"
+    assert "h3ir serve" not in gaps[0].message
 
 
 # ------------------------------------------------------------------ how the node uses all of this
@@ -565,10 +634,14 @@ def test_the_check_happens_before_the_media_travels():
     # would have this test claiming the wrong thing about a file that is correct.
     where = {n.func.id: n.lineno for n in ast.walk(execute)
              if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
-    assert "fetch_contract" in where, "the compile node never asks the service what it takes"
-    assert "compile_with_media" in where, "this scan no longer finds the compile call; it is blind"
-    assert where["fetch_contract"] < where["compile_with_media"], \
-        "the contract is checked after the media has already been sent"
+    where.update({n.func.attr: n.lineno for n in ast.walk(execute)
+                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)})
+    assert "contract_differences" in where, "the compile node never checks the two halves at all"
+    for compile_call in ("compile_with_media", "compile_here"):
+        assert compile_call in where, \
+            f"this scan no longer finds {compile_call}; one of the two paths is unguarded"
+        assert where["contract_differences"] < where[compile_call], \
+            f"the contract is checked after {compile_call} has already run"
 
 
 def test_the_node_passes_the_graphs_own_transcripts_to_the_check():

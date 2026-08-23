@@ -61,8 +61,8 @@ def test_the_bundle_carries_the_five_picks_and_invents_nothing():
     assert d["text_encoder"] == "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
     assert d["video_vae"] == "minimax_h3_video_vae_fp16.safetensors"
     assert d["audio_vae"] == "minimax_h3_audio_vae_fp32.safetensors"
-    assert set(d) == {"server", "reference_model", "frames_model", "text_encoder", "video_vae",
-                      "audio_vae", "weight_dtype", "timeout_s"}
+    assert set(d) == {"server", "llm_url", "llm_model", "reference_model", "frames_model",
+                      "text_encoder", "video_vae", "audio_vae", "weight_dtype", "timeout_s"}
 
 
 def test_a_pick_this_pack_would_once_have_overruled_survives_untouched():
@@ -435,7 +435,7 @@ def test_a_degraded_brief_is_flagged_rather_than_passed_off_as_written(monkeypat
     out = C.compile_brief("http://x", {"intent": "a"})
     assert out["degraded"] is True
     assert "refused twice" in out["fallback_reason"]
-    assert "not a written one" in C.report(out, server="http://x", sizing_conflict=False)
+    assert "not a written one" in C.report(out, compiler="the OpenH3-IR service at http://x", sizing_conflict=False)
 
 
 def test_an_unexpected_status_carries_the_body_rather_than_just_the_number(monkeypatch):
@@ -513,7 +513,7 @@ def test_the_report_puts_the_users_own_socket_names_back_on_the_services_labels(
             "wiring": [{"label": "<Picture 1>", "wiring": "ref_image_1", "sha256": "a" * 64,
                         "sizing": "match", "retention": "fully_preserved"},
                        {"label": "<Audio 1>", "wiring": "ref_video_audio_1", "sha256": "b" * 64}]}
-    text = C.report(body, server="http://x", sizing_conflict=False, asked_seconds=10.0,
+    text = C.report(body, compiler="the OpenH3-IR service at http://x", sizing_conflict=False, asked_seconds=10.0,
                     bindings={"a" * 64: ["picture 1"], "b" * 64: ["clip 1 sound"]})
     assert "picture 1" in text and "<Picture 1>" in text and "ref_image_1" in text
     assert "fully_preserved" in text
@@ -531,7 +531,7 @@ def test_the_same_file_on_two_sockets_gets_both_of_its_labels():
     body = {"mode": "ref2va", "frames": 192, "canvas": [1344, 768], "wiring": [
         {"label": "<Audio 1>", "wiring": "ref_audio_1", "sha256": "s" * 64, "kind": "audio"},
         {"label": "<Audio 2>", "wiring": "ref_audio_2", "sha256": "s" * 64, "kind": "audio"}]}
-    text = C.report(body, server="http://x", sizing_conflict=False, bindings=bindings)
+    text = C.report(body, compiler="the OpenH3-IR service at http://x", sizing_conflict=False, bindings=bindings)
     assert "?" not in text, text
     assert "sound effect" in text and "voice to match" in text
     lines = [ln for ln in text.splitlines() if "<Audio" in ln]
@@ -546,7 +546,7 @@ def test_a_sound_is_not_labelled_with_a_sizing_it_has_no_use_for():
          "sizing": "match"},
         {"label": "<Video 1>", "wiring": "ref_video_1", "sha256": "a" * 64, "kind": "video",
          "sizing": "match"}]}
-    text = C.report(body, server="http://x", sizing_conflict=False,
+    text = C.report(body, compiler="the OpenH3-IR service at http://x", sizing_conflict=False,
                     bindings={"a" * 64: "clip 1", "b" * 64: "clip 1 sound"})
     audio_line = next(ln for ln in text.splitlines() if "<Audio 1>" in ln)
     assert "sizing" not in audio_line
@@ -554,7 +554,7 @@ def test_a_sound_is_not_labelled_with_a_sizing_it_has_no_use_for():
 def test_a_label_that_lands_on_no_socket_is_shown_as_unknown_rather_than_guessed():
     body = {"mode": "ref2va", "frames": 243, "canvas": [1344, 768],
             "wiring": [{"label": "<Picture 1>", "wiring": "ref_image_1", "sha256": "z" * 64}]}
-    text = C.report(body, server="http://x", sizing_conflict=False, bindings={})
+    text = C.report(body, compiler="the OpenH3-IR service at http://x", sizing_conflict=False, bindings={})
     assert "?" in text and "<Picture 1>" in text
 
 

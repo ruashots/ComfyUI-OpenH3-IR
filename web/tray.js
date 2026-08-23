@@ -42,14 +42,14 @@ const fileCount = (slots) =>
 const PREFIX = { picture: "picture", video: "video", sound: "audio" };
 const ROLES = {
   picture: ["something in the shot", "the setting", "a style to copy",
-            "add it to the clip", "replace the one in the clip",
+            "add it to an existing clip", "replace the one in an existing clip",
             "first frame", "last frame", "storyboard"],
   video: ["copy what is in it", "copy how it is shot", "edit it", "carry on from it"],
   sound: ["play it", "match its style", "cut to its beat", "sound effect", "voice to match"],
 };
 const ROLE_TOKEN = {
   "something in the shot": "subject", "the setting": "environment", "a style to copy": "style",
-  "add it to the clip": "placed_subject", "replace the one in the clip": "replacement_subject",
+  "add it to an existing clip": "placed_subject", "replace the one in an existing clip": "replacement_subject",
   "first frame": "frame_anchor_first", "last frame": "frame_anchor_last",
   "storyboard": "storyboard",
   "copy what is in it": "subject", "copy how it is shot": "structure", "edit it": "edit_source",
@@ -759,8 +759,8 @@ class Tray {
     const NOTE_ASK = {
       voice_timbre: "how the voice sounds: hoarse, unhurried, mid-forties",
       sfx: "what it is: a heavy door slamming, close, no reverb",
-      bgm: "timbre, tempo, instruments: slow synth score, no drums",
-      music_style: "timbre, tempo, instruments: slow synth score, no drums",
+      bgm: "timbre, tempo, instruments: slow synth music, no drums",
+      music_style: "timbre, tempo, instruments: slow synth music, no drums",
       beat_reference: "the rhythm: a steady 90 bpm pulse, one hit per bar",
     };
     const note = el("input", { class: "oh3-in oh3-wide", value: slot.note || "", placeholder:

@@ -35,29 +35,63 @@ them read the contract that package publishes and compare it to the copies this 
 the whole point: it holds this pack against the released compiler rather than against a working tree
 nobody has.
 
+## What the README leads with
+
+The owner's words, 2026-08-23, and they are the pitch rather than a description:
+
+> no more copy pasting prompts from a chat with an llm, no more explaining in what slot a resource
+> is so the llm can name it right, no more explaining what a resource contains, OpenH3-IR takes
+> care of that directly in comfy
+
+Every clause of that is a thing this pack actually removes, so none of it is a claim anybody has to
+soften:
+
+- **The copy and paste.** The compiler writes the brief. Nobody carries text back from a chat window.
+- **Naming a slot so a model gets the label right.** Labels are computed in the compiler's `plan.py`,
+  never asked for. That is rule one of the codebase and it is why the labels are always right.
+- **Explaining what a file holds.** The reference pictures and clips are read through the language
+  model, so a person says `@carguy` and nothing else.
+- **Leaving ComfyUI to do any of it.** The compiler runs in the same Python ComfyUI runs.
+
+Written down here because the README gets its final pass after the Main node lands, and a pitch the
+owner said once in a message is the sort of thing that gets lost between now and then.
+
 ## Where things are
 
 The repository root is the pack. That is not a layout preference: ComfyUI Manager clones a repository
 straight into `custom_nodes` and imports the cloned directory's top level, so anything one folder
 deeper produces zero nodes and no error anybody can act on.
 
-The ComfyUI pack in the repository root is seven Python files plus a `web/` folder of five JS files, and imports nothing from `h3ir`. Two of those files are generated; both say so at the top:
+The ComfyUI pack in the repository root is eight Python files plus a `web/` folder of five JS files. Exactly one of them names `h3ir`, and every one of those imports is inside a function. Two files are generated; both say so at the top:
 
 | file | what it owns |
 |---|---|
-| `h3ir_client.py` | the service protocol, the option lists, the report. No ComfyUI, no torch, no third-party packages. |
+| `h3ir_client.py` | the service protocol, the option lists, the report, and the refusal sentences BOTH compile paths use. No ComfyUI, no torch, no third-party packages, no `h3ir`. |
+| `compiler.py` | running the compiler in this Python: is it installed, what does it publish, which language model writes, does that model see, and the compile itself. **The only module that imports `h3ir`.** |
 | `media.py` | tensors and mappings to files on disk, content-addressed. No ComfyUI at module scope. |
 | `nodes.py` | the four node schemas -- Main, Media, Setup and the optional Director -- the model loaders and the socket-to-file mapping. This is the only file that needs a canvas. |
-| `contract.py` | the snapshot of the contract this pack was built against, and the decision about what a difference costs: what stops a queue, what is a line in the report. Imports nothing from `h3ir`. |
+| `contract.py` | the snapshot of the contract this pack was built against, `Half` (which compiler this graph uses and what to call it), and the decision about what a difference costs: what stops a queue, what is a line in the report. |
 | `contract.json` | GENERATED. `h3ir contract` wrote it. The snapshot the file above reads. |
 | `web/contract.data.js` | GENERATED. `h3ir contract --js` wrote it. The seven profiles, the camera table and the cap, for a panel that has to draw with nothing running. |
 | `web/director.js` | the Director panel. It imports the three above rather than declaring them. See below. |
+| `web/setup.js` | the Setup panel. Two named groups, a bottom row, and the three controls that answer back. |
 
-**Media and Director each carry a DOM board; Main and Setup are widget nodes** the theme draws, with
-`prompt.js` putting an @ picker over Main's sentence. All of it is decoration in the strict sense:
-each node's real state is ordinary widget values, and the two boards edit ONE string each -- the
-tray's JSON on Media, the direction's on Director. Delete `web/` and every node still works, still
-API-drives and still restores from a saved workflow, with the strings visible as themselves.
+**ComfyUI saves a node's widget values as a POSITIONAL list.** Measured on a saved workflow in a real
+install, not assumed: `OpenH3IRSetup` reads back as `["http://127.0.0.1:8420", "<ref2va file>", ...]`
+with no names anywhere. So a new input added in the middle of a schema silently shifts every value
+after it in every workflow anybody has saved, and a checkpoint pick becomes a VAE pick with nothing
+on screen to say why. **New inputs go on the end of `define_schema`, always.** That is why the two
+newest fields on the Setup node, which are also the two most important ones, are last in the list.
+The panel in `web/` lays them out however it likes; the order in the schema is what the bare canvas
+falls back to and what every saved file depends on.
+
+**Media, Director and Setup each carry a DOM board; Main is a widget node** the theme draws, with
+`prompt.js` putting an @ picker over its sentence. All of it is decoration in the strict sense: each
+node's real state is ordinary widget values. Media and Director edit ONE string each -- the tray's
+JSON and the direction's -- and Setup edits the ten widgets it already had, keeping the five file
+pickers as real combos underneath so ComfyUI still validates them. Delete `web/` and every node still
+works, still API-drives and still restores from a saved workflow, with the values visible as
+themselves.
 
 **The Director's stored directions are the pack's only piece of state outside a graph, and they are
 deliberately outside the compiler.** They are files in ComfyUI's own per-user store,
@@ -86,6 +120,114 @@ absence is the default and it is load-bearing**, so anything that makes the node
 a graph that does not have one is a bug. There is no `none` on it for the same reason: the node IS
 the choice, and unplugging it is the absence of the only one rather than a third state.
 
+### The Setup panel
+
+`web/setup.js`. Five rules on it are not preferences, and each has a defect planted for it in the
+falsification run.
+
+**The panel never guesses an address, and a dropped node makes no network call at all.** It once
+offered four addresses people commonly run a language model on and checked them the moment a node
+was dropped. A port is configurable, so that was four guesses, confidently wrong for anybody who
+changed one, and it was the only thing in the pack that reached the network without being asked.
+Both are gone, along with the caret that opened the list, the `use it` button and the four messages
+that served them. `tests/test_setup_panel.py::test_a_fresh_node_makes_no_network_call_at_all` reads
+every call site of the two language model routes and holds them to the two methods a person presses.
+
+**The top field is `endpoint` and the bottom one is `runs at`.** The panel's own messages say
+endpoint in every one of them, so the label was the one place disagreeing with the rest of it. It is
+never "openai endpoint": somebody running Ollama on their own machine reads that as needing an
+account with OpenAI. That fact lives in the group's quiet line, where it is a fact about a protocol
+rather than a claim about who you buy from.
+
+**`server` empty means here and an address means there, and that IS the control.** The bottom row's
+control was two rows, `in this ComfyUI` and `on another machine`, and they were never a pair: the
+first is a complete answer, the second is the beginning of a question, and clicking it could not
+change anything because there is no third thing to set. One labelled field replaced them, with a
+line under it that changes with the state and a `clear` drawn only while there is something to
+clear.
+
+**Every field carries a label drawn inside its own row.** A placeholder is gone at the first
+keystroke and the field is anonymous from then on. The grey address in the address field is an
+EXAMPLE; the word `address` beside it is the label. The guard reads the row as a balanced expression
+rather than searching the whole file, because the weaker version passed while the address label was
+deleted: the same word labels a field in the bottom row's control.
+
+**The credential is never a widget value.** Widget values go into the saved workflow and into the
+graph inside every rendered video, and people share workflows by dropping a picture into a chat. It
+lives in `user/default/openh3ir/llm/keys.json` and `compiler.endpoint_key` reads it from there, so
+the test and the real compile take the same path to the same credential. Measured on the canvas: with
+a key set, neither the serialized workflow nor the API-format prompt contains it. The guard checks
+WHAT is written to a widget, not which widget: the first draft only looked at the widget's name and
+planting `this.w.llm_model.value = key` walked straight past it.
+
+**`installed` is read before `ok`.** The vision route answers `installed: false` together with
+`ok: false`, so a panel that reads `ok` first paints a red "vision off" about a model nobody asked.
+
+**The user cannot drag the height, and the height is not a constant.** Those are two different
+things and the first is the one the design asks for. The three quiet lines under the headings reflow,
+so the content is a different height at every width: 442 at 520 and 481 at 430, and 495 at 430 with
+the longer "compiling elsewhere" lead. A single constant has to be the largest of those, which leaves
+53 pixels spare at the width the node opens at. A draft parked them above the two headings and they
+read as a hole in a finished panel. `fit()` measures instead, so the board is tight at every width
+and `onResize` still puts back whatever it last measured.
+
+**`fit()` asks for `needs + chrome` and never for a correction to its own last request.** Setting the
+node's size makes the frontend lay the widget out again, which comes straight back into `fit`, so
+anything that adds to its own last number compounds. Measured: a draft that did walked the node to
+minus fourteen hundred pixels in four frames. `chrome` is what the frontend's wrapper keeps out of
+whatever a DOM widget is given, 16 pixels on the version this was measured against, and it is learned
+each pass rather than written down.
+
+**No backtick may appear inside the CSS block.** It is one template literal, so a pair in a comment
+ends the string and the file stops parsing. Measured: it took the whole panel off the canvas and
+`node --check` passed the file. Importing the module is what catches it.
+
+### The routes a panel can ask
+
+`web_api.py` registers five on ComfyUI's own server. Two are the media tray's; three are for the
+Setup node's panel, and all three report rather than decide -- nothing in them writes a widget, and
+the node re-resolves everything at queue time from the values on the canvas.
+
+| route | what it answers |
+|---|---|
+| `POST /openh3ir/upload` | one dropped file onto the tray, and what to show for it |
+| `GET /openh3ir/probe` | whether a file a saved tray names is still on this machine |
+| `GET /openh3ir/compiler` | `state` is `ok`, `absent` or `broken`, the version, and what the environment would give |
+| `POST /openh3ir/llm/models` | `{url}` in; liveness, every id, `choose_from`, and `also_known_as` out |
+| `POST /openh3ir/llm/vision` | `{url, model}` in; `ok` true, false, or **null** out |
+
+Three things about those three that are not obvious and are each a measured fact.
+
+**`choose_from` is shorter than `ids` on a real vLLM, and WHICH name survives is a stated rule.**
+`--served-model-name` publishes one set of weights under several ids and gives every entry the same
+`root`. Offering both would be the panel inventing a decision, and the person picking one has no way
+to know the two are the same file. `compiler.one_name_per_checkpoint` groups by `root` and keeps the
+first id in the group whose `id` is not its own `root` -- that id is a name somebody typed into
+`--served-model-name`, where `root` is only where the weights came from. Nothing named means nothing
+to prefer, and there the server's own order stands. Where entries carry no `root`, as on Ollama,
+every id is its own model, which can only offer more choice and never merge two that really are two.
+
+**The survivor is always an `id` and never a `root`, and that is correctness rather than taste.**
+Whatever a person picks goes straight back to the server as `model`. A `root` is not promised to be
+a name the server answers to: vLLM sets it from the model path, so a server started from a local
+directory has a filesystem path there with no route behind it. `also_known_as` maps each survivor to
+the names it stands in for, so a panel can say so beside the row instead of leaving somebody to
+wonder where the id they typed last week went.
+
+**`ok` on the vision route has three values and `null` is not a failure.** No model list on any of
+these servers reports vision, so sending a picture is the only way to find out, and a request that
+comes back refused is not automatically an answer about vision. Measured against a live vLLM: asking
+about a model the endpoint does not serve answers `HTTP 404: The model does not exist`, and the first
+draft of that route reported it as "it cannot read a picture, pick one with a vision tower". Somebody
+reading that goes looking for a vision model to replace one that was never there. Only 400, 415 and
+422 produce a verdict now; 404, 401, 403 and everything else answer `null` and say what really
+happened.
+
+**Everything in them that touches a network runs off the event loop.** ComfyUI serves its whole
+frontend from one aiohttp loop and the compiler's client is blocking `httpx`, so calling it inline
+would freeze the canvas -- for everybody on that server -- for as long as a language model takes to
+answer. `run_in_executor` is what keeps a slow endpoint a slow button rather than a hung ComfyUI.
+
 
 ## What crosses to the compiler, and how drift is made loud
 
@@ -99,12 +241,26 @@ and it is the answer to a problem the two halves of this repository are about to
 two audiences, they are two repositories, and a test that opens the other half's source file and
 reads it as text cannot exist.
 
-**The pack becomes an all-in-one, so IN-PROCESS is the ordinary case.** A ComfyUI user installs the
-pack, points it at their own language model, and works: no service to start, no port, no second
-process. The compiler runs in the same Python ComfyUI runs, out of the installed `open-h3-ir`. HTTP
-stays for a compiler on another machine and stops being the normal way in. The two are still
-installed separately and still drift, which is exactly why the contract is not an HTTP thing --
-in-process there is no round trip to reveal a mismatch at all.
+**The pack IS an all-in-one, and IN-PROCESS is the ordinary case.** A ComfyUI user installs the pack,
+points it at their own language model, and works: no service to start, no port, no second process.
+The compiler runs in the same Python ComfyUI runs, out of the installed `open-h3-ir`. HTTP stays for
+a compiler on another machine and is no longer the normal way in. The two are still installed
+separately and still drift, which is exactly why the contract is not an HTTP thing -- in-process
+there is no round trip to reveal a mismatch at all.
+
+**One field on the Setup node decides which, and there is no fallback between them.** Empty means
+here; an address means there. `contract.the_compiler` turns that field into a `Half`, which carries
+what to call that compiler, how to ask it what it takes, and what a person does to update it. Every
+sentence in `differences()` is written off that object, because the same difference has two fixes and
+a message telling a ComfyUI user to restart a service they never started is the wrong-message failure
+this pack exists to prevent.
+
+**The language model's address is on the node now.** It used to be `H3IR_LLM_URL` on a service, and
+there is no service to set it on. The environment variable still works for somebody who exports it
+before ComfyUI starts, and the report says so when a value came from there, because a setting nobody
+can see on the canvas is one somebody spends an afternoon looking for. Which model is settled on the
+pack's side rather than left to the compiler, for the same reason: the compiler's own refusal to
+guess between several models names an environment variable, and this pack's names a field.
 
 **Read off the authority wherever there is one.** The roles come from `Role`, the profiles and the
 camera table from `director.py`, the ceilings from `grid.py` and `shots.py`. Two lists are literals
@@ -167,13 +323,19 @@ Two ways to get the live contract, and the choice is the caller's:
 
 | where the compile happens | how to ask |
 |---|---|
-| the same Python, from the installed package | `contract.installed_contract()` |
+| the same Python, from the installed package | `compiler.installed_contract()` |
 | a service on another machine | `h3ir_client.fetch_contract(server)` |
 
 **Never merge them or fall back from one to the other.** Reading the local package's contract while
 compiling against a remote service compares this machine's version to another machine's work, and
-refuses graphs that are fine. The compile node talks HTTP today, so it asks over HTTP, and a test
-fails if it starts reading the local one.
+refuses graphs that are fine. `contract.the_compiler` picks one to match the compile path and hands
+back a `Half` that can only ask that one.
+
+The test that guards this used to assert that the string `installed_contract(` was absent from
+`nodes.py`, which was true right up until the node legitimately needed both. It watches now: both
+sources are replaced with counters and each half is driven for real. A check on source text cannot
+tell "calls the wrong one" from "mentions the right one", and this repository has already shipped one
+test that read source text and was green while the thing it guarded was broken.
 
 **The compiler import is lazy, and stays lazy.** The old rule was "the pack imports nothing from
 `h3ir`", which was right while the nodes only spoke HTTP and is wrong for an all-in-one. What
@@ -184,25 +346,41 @@ fastapi, uvicorn, pydantic and tiktoken, which have no business being pulled int
 on every start for a graph that may never compile. `installed_contract` answers None for absent,
 broken and half-installed alike, because a client never fails on the CHECK.
 
-#### What an in-process caller does NOT get for free
+#### The in-process path builds the brief itself, and that choice is tested rather than argued
 
 Measured, with fastapi and pydantic blocked: every compiler module imports except `service.py`.
 That one holds `_to_brief`, the only conversion from a request into a `Brief`, and the eleven
 refusals it raises along the way -- role resolution, the unknown-role message, the soundtrack
 pairing, the upload checks.
 
-So an in-process caller has two options and both cost something. Reuse that conversion and fastapi
-comes into ComfyUI's Python with it. Build `models.Brief` and `models.AssetRef` directly and the
-field names are checked by Python at call time, which is loud and free, but `role_stated` and the
-pairing rules become the caller's to get right -- and `role_stated` is silent when it is wrong,
-because mode inference reads it.
+So there were two options and both cost something. Reuse that conversion and fastapi comes into
+ComfyUI's Python with it. Build `models.Brief` and `models.AssetRef` directly and the field names
+are checked by Python at call time, which is loud and free, but `role_stated` and the pairing rules
+become the caller's to get right -- and `role_stated` is silent when it is wrong, because mode
+inference reads it.
 
-This pack is well placed for the second option: it states every role explicitly and never infers
-one, so `role_stated` is always true for it and the unknown-role refusal is pre-empted by the
-contract check. A caller that under-specifies is not. **`ROLE_OF_THE_FIELD_LISTS` is published in
-the contract for this reason**: the field lists describe a `POST /v1/briefs` request and NOT the
-dataclasses, and the two are similar enough to be mistaken for each other by somebody building the
-all-in-one.
+**The second was taken, and here is what decided it.** Most of `_to_brief` is about uploads, and an
+in-process compile has none: the files are on the same disk, because this pack put them there. What
+is left is small enough to state, this pack states every role explicitly so `role_stated` is always
+true for it, and the unknown-role refusal is pre-empted by the contract check. Measured on this
+checkout: `import h3ir.compile` costs 0.06 seconds and loads none of fastapi, uvicorn, pydantic or
+tiktoken, so all four stay installed and never loaded.
+
+**What replaces the argument is a test.** `tests/test_in_process.py` runs one request through both
+conversions -- `service._to_brief` and `compiler.brief_from_payload` -- and compares the two briefs
+field by field, for every job a picture can have and for a graph with nothing in the tray. fastapi
+is absent from a user's ComfyUI and present in this repository's test environment, which makes this
+the one place both can run side by side. `_as_the_service_answers` is held against
+`service.get_prompt` and `service._envelope` the same way.
+
+**`ROLE_OF_THE_FIELD_LISTS` is published in the contract for this reason**: the field lists describe
+a `POST /v1/briefs` request and NOT the dataclasses, and the two are similar enough to be mistaken
+for each other by somebody working on the all-in-one.
+
+**An unknown key is refused on this path too.** `_BRIEF_KEYS` and `_ASSET_KEYS` in `compiler.py` are
+the in-process spelling of `extra="forbid"`, and they exist because pydantic's silent drop cost this
+project a real bug once. A conversion that read the keys it knows and ignored the rest would put
+that bug straight back on the path that has no wire to catch it.
 
 #### Two halves at different versions have to keep working
 
@@ -326,8 +504,11 @@ comment.** Break the code the test covers, on purpose, and watch it go red.
 that was green for its whole life while the field it guarded was dropped in transit, so every check
 holding the compiler and the pack together has a defect written for it in
 `research/contract_falsification.py`: it plants the defect, proves the defect is live, runs the test
-that claims to catch it, and puts the file back. Run it on a clean tree; 49 cases, all of which must
-go red.
+that claims to catch it, and puts the file back. Run it on a clean tree and every case must go red.
+
+The case count is deliberately not written here. It moves every time anybody adds a guard, the run
+prints it, and a stale number in this file reads as five cases having gone missing. What the run must
+report is `0 green, 0 broken`, and `git status` must be clean afterwards.
 
 **It reports three outcomes, not two, and that distinction is the file's second draft.** RED is a
 guard that fired. GREEN is a guard that did not. BROKEN is a case that never ran -- the anchor

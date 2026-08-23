@@ -59,8 +59,8 @@ PICTURE_ROLES = {
     # three that say a picture IS a frame or a plan, because that is what they are: the same
     # subject, with a job inside somebody else's footage. The service refuses either of them with
     # a sentence when no clip is being edited, rather than quietly demoting it to `subject`.
-    "add it to the clip": "placed_subject",
-    "replace the one in the clip": "replacement_subject",
+    "add it to an existing clip": "placed_subject",
+    "replace the one in an existing clip": "replacement_subject",
     "first frame": "frame_anchor_first",
     "last frame": "frame_anchor_last",
     "storyboard": "storyboard",
@@ -127,7 +127,7 @@ class Slot:
     transcript: str = ""
     soundtrack: str = "off"
     # Who this picture takes over from, in the user's own words, and only on a picture set to
-    # "replace the one in the clip". Free text rather than a list of the clip's people, because
+    # "replace the one in an existing clip". Free text rather than a list of the clip's people, because
     # nothing in this chain can enumerate them: the service reads three sampled frames of a clip,
     # so somebody can be in none of them and walk in later. The person looking at the clip knows.
     replaces: str = ""
